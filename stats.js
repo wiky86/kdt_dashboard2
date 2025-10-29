@@ -12,8 +12,58 @@ document.addEventListener('DOMContentLoaded', function() {
     // 필터 타입 변경 이벤트 리스너
     document.getElementById('filterType').addEventListener('change', handleFilterTypeChange);
     
+    // 집계 기간 변경 이벤트 리스너
+    document.getElementById('timeGrouping').addEventListener('change', updateDateRangeOptions);
+    
     console.log('통계 페이지 초기화 완료');
 });
+
+// YYYY년 M월 포맷터
+function formatYearMonth(date) {
+    try {
+        const y = date.getFullYear();
+        const m = date.getMonth() + 1;
+        return `${y}년 ${m}월`;
+    } catch (e) {
+        return '';
+    }
+}
+
+// 기간 표시 텍스트 생성
+function getPeriodDisplayText(startPeriod, endPeriod, timeGrouping) {
+    if (!startPeriod || !endPeriod) {
+        return '';
+    }
+    
+    let startText, endText;
+    
+    switch (timeGrouping) {
+        case 'monthly':
+            const [startYear, startMonth] = startPeriod.split('-');
+            const [endYear, endMonth] = endPeriod.split('-');
+            startText = `${startYear}년 ${parseInt(startMonth)}월`;
+            endText = `${endYear}년 ${parseInt(endMonth)}월`;
+            break;
+        case 'quarterly':
+            const [qStartYear, qStartQuarter] = startPeriod.split('-Q');
+            const [qEndYear, qEndQuarter] = endPeriod.split('-Q');
+            startText = `${qStartYear}년 ${qStartQuarter}분기`;
+            endText = `${qEndYear}년 ${qEndQuarter}분기`;
+            break;
+        case 'halfyearly':
+            const [hStartYear, hStartHalf] = startPeriod.split('-H');
+            const [hEndYear, hEndHalf] = endPeriod.split('-H');
+            startText = `${hStartYear}년 ${hStartHalf}반기`;
+            endText = `${hEndYear}년 ${hEndHalf}반기`;
+            break;
+        case 'yearly':
+            startText = `${startPeriod}년`;
+            endText = `${endPeriod}년`;
+            break;
+    }
+    
+    return `${startText} ~ ${endText}`;
+}
 
 // 필터 타입 변경 처리
 function handleFilterTypeChange() {
@@ -77,6 +127,9 @@ async function loadGoogleSheetsData() {
             
             console.log('구글 시트 데이터 로드 완료:', allTrainingData.length, '개 항목');
             
+            // 날짜 범위 옵션 업데이트
+            updateDateRangeOptions();
+            
             // 로딩 상태 숨기기
             document.getElementById('loadingState').style.display = 'none';
             
@@ -102,6 +155,90 @@ function updateNCSJobOptions() {
         ncsJobs.map(job => `<option value="${job}">${job}</option>`).join('');
 }
 
+// 날짜 범위 옵션 업데이트
+function updateDateRangeOptions() {
+    if (allTrainingData.length === 0) return;
+    
+    const timeGrouping = document.getElementById('timeGrouping').value;
+    const startSelect = document.getElementById('startPeriod');
+    const endSelect = document.getElementById('endPeriod');
+    
+    if (!startSelect || !endSelect) return;
+    
+    // 유효한 시작일이 있는 데이터만 필터링
+    const validData = allTrainingData.filter(item => 
+        item.startDate && item.startDate.trim() !== '' && 
+        !isNaN(new Date(item.startDate).getTime())
+    );
+    
+    if (validData.length === 0) {
+        startSelect.innerHTML = '<option value="">데이터가 없습니다</option>';
+        endSelect.innerHTML = '<option value="">데이터가 없습니다</option>';
+        return;
+    }
+    
+    // 날짜별로 그룹화하여 옵션 생성
+    const periods = new Set();
+    
+    validData.forEach(item => {
+        const startDate = new Date(item.startDate);
+        let periodKey;
+        
+        switch (timeGrouping) {
+            case 'monthly':
+                periodKey = `${startDate.getFullYear()}-${String(startDate.getMonth() + 1).padStart(2, '0')}`;
+                break;
+            case 'quarterly':
+                const quarter = Math.floor(startDate.getMonth() / 3) + 1;
+                periodKey = `${startDate.getFullYear()}-Q${quarter}`;
+                break;
+            case 'halfyearly':
+                const half = startDate.getMonth() < 6 ? 1 : 2;
+                periodKey = `${startDate.getFullYear()}-H${half}`;
+                break;
+            case 'yearly':
+                periodKey = `${startDate.getFullYear()}`;
+                break;
+        }
+        periods.add(periodKey);
+    });
+    
+    // 정렬된 기간 배열 생성
+    const sortedPeriods = Array.from(periods).sort();
+    
+    // 옵션 생성
+    const options = sortedPeriods.map(period => {
+        let displayText;
+        switch (timeGrouping) {
+            case 'monthly':
+                const [year, month] = period.split('-');
+                displayText = `${year}년 ${parseInt(month)}월`;
+                break;
+            case 'quarterly':
+                const [qYear, qQuarter] = period.split('-Q');
+                displayText = `${qYear}년 ${qQuarter}분기`;
+                break;
+            case 'halfyearly':
+                const [hYear, hHalf] = period.split('-H');
+                displayText = `${hYear}년 ${hHalf}반기`;
+                break;
+            case 'yearly':
+                displayText = `${period}년`;
+                break;
+        }
+        return `<option value="${period}">${displayText}</option>`;
+    }).join('');
+    
+    startSelect.innerHTML = '<option value="">시작 시점 선택</option>' + options;
+    endSelect.innerHTML = '<option value="">종료 시점 선택</option>' + options;
+    
+    // 기본값 설정 (전체 범위)
+    if (sortedPeriods.length > 0) {
+        startSelect.value = sortedPeriods[0];
+        endSelect.value = sortedPeriods[sortedPeriods.length - 1];
+    }
+}
+
 // 통계 생성
 function generateStatistics() {
     console.log('통계 생성 시작');
@@ -119,11 +256,16 @@ function generateStatistics() {
         return;
     }
     
+    // 선택된 날짜 범위 텍스트 생성
+    const startPeriod = document.getElementById('startPeriod').value;
+    const endPeriod = document.getElementById('endPeriod').value;
+    const periodText = getPeriodDisplayText(startPeriod, endPeriod, timeGrouping);
+    
     // 시간별 그룹화
     const groupedData = groupDataByTime(filteredData, timeGrouping);
     
     // 차트 생성
-    createStatisticsChart(groupedData, timeGrouping, metricType);
+    createStatisticsChart(groupedData, timeGrouping, metricType, periodText);
     
     // 통계 요약 생성
     createStatisticsSummary(filteredData, groupedData, metricType);
@@ -159,7 +301,45 @@ function getFilteredData() {
         !isNaN(new Date(item.startDate).getTime())
     );
     
+    // 날짜 범위 필터링
+    filteredData = applyDateRangeFilter(filteredData);
+    
     return filteredData;
+}
+
+// 날짜 범위 필터 적용
+function applyDateRangeFilter(data) {
+    const startPeriod = document.getElementById('startPeriod').value;
+    const endPeriod = document.getElementById('endPeriod').value;
+    const timeGrouping = document.getElementById('timeGrouping').value;
+    
+    if (!startPeriod || !endPeriod) {
+        return data;
+    }
+    
+    return data.filter(item => {
+        const startDate = new Date(item.startDate);
+        let periodKey;
+        
+        switch (timeGrouping) {
+            case 'monthly':
+                periodKey = `${startDate.getFullYear()}-${String(startDate.getMonth() + 1).padStart(2, '0')}`;
+                break;
+            case 'quarterly':
+                const quarter = Math.floor(startDate.getMonth() / 3) + 1;
+                periodKey = `${startDate.getFullYear()}-Q${quarter}`;
+                break;
+            case 'halfyearly':
+                const half = startDate.getMonth() < 6 ? 1 : 2;
+                periodKey = `${startDate.getFullYear()}-H${half}`;
+                break;
+            case 'yearly':
+                periodKey = `${startDate.getFullYear()}`;
+                break;
+        }
+        
+        return periodKey >= startPeriod && periodKey <= endPeriod;
+    });
 }
 
 // 시간별 데이터 그룹화
@@ -223,7 +403,7 @@ function groupDataByTime(data, timeGrouping) {
 }
 
 // 통계 차트 생성
-function createStatisticsChart(groupedData, timeGrouping, metricType) {
+function createStatisticsChart(groupedData, timeGrouping, metricType, periodText) {
     const ctx = document.getElementById('statisticsChart').getContext('2d');
     
     // 기존 차트 제거
@@ -260,7 +440,7 @@ function createStatisticsChart(groupedData, timeGrouping, metricType) {
         'completionRate': '수료율',
         'satisfaction': '만족도',
         'totalCapacity': '총 모집정원',
-        'totalConfirmed': '총 수강확정'
+        'totalConfirmed': '수강확정 인원'
     };
     
     const timeNames = {
@@ -271,7 +451,7 @@ function createStatisticsChart(groupedData, timeGrouping, metricType) {
     };
     
     document.getElementById('chartTitle').textContent = 
-        `${timeNames[timeGrouping]} ${metricNames[metricType]} 통계`;
+        `${timeNames[timeGrouping]} ${metricNames[metricType]} 통계 (${periodText})`;
     
     // 차트 생성
     currentChart = new Chart(ctx, {

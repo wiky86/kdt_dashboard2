@@ -300,12 +300,26 @@
                     </div>
                     <div class="form-group">
                         <label class="form-label">집계 기간</label>
-                        <select id="timeGrouping" class="form-select">
+                        <select id="timeGrouping" class="form-select" onchange="updateDateRangeOptions()">
                             <option value="monthly">월별</option>
                             <option value="quarterly">분기별</option>
                             <option value="halfyearly">반기별</option>
                             <option value="yearly">연도별</option>
                         </select>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label class="form-label">시작 시점</label>
+                            <select id="startPeriod" class="form-select">
+                                <!-- 동적으로 생성됩니다 -->
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">종료 시점</label>
+                            <select id="endPeriod" class="form-select">
+                                <!-- 동적으로 생성됩니다 -->
+                            </select>
+                        </div>
                     </div>
                 </div>
                 
@@ -322,7 +336,7 @@
                             <option value="completionRate">수료율 (%)</option>
                             <option value="satisfaction">만족도</option>
                             <option value="totalCapacity">총 모집정원</option>
-                            <option value="totalConfirmed">총 수강확정</option>
+                            <option value="totalConfirmed">수강확정 인원</option>
                         </select>
                     </div>
                 </div>
