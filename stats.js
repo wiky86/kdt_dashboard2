@@ -9,9 +9,6 @@ document.addEventListener('DOMContentLoaded', function() {
     // 구글 시트에서 데이터 로드
     loadGoogleSheetsData();
     
-    // 필터 타입 변경 이벤트 리스너
-    document.getElementById('filterType').addEventListener('change', handleFilterTypeChange);
-    
     // 집계 기간 변경 이벤트 리스너
     document.getElementById('timeGrouping').addEventListener('change', updateDateRangeOptions);
     
@@ -65,25 +62,6 @@ function getPeriodDisplayText(startPeriod, endPeriod, timeGrouping) {
     return `${startText} ~ ${endText}`;
 }
 
-// 필터 타입 변경 처리
-function handleFilterTypeChange() {
-    const filterType = document.getElementById('filterType').value;
-    const searchFilter = document.getElementById('searchFilter');
-    const ncsFilter = document.getElementById('ncsFilter');
-    
-    // 모든 필터 숨기기
-    searchFilter.style.display = 'none';
-    ncsFilter.style.display = 'none';
-    
-    // 선택된 필터 타입에 따라 표시
-    if (filterType === 'search') {
-        searchFilter.style.display = 'block';
-    } else if (filterType === 'ncs') {
-        ncsFilter.style.display = 'block';
-        updateNCSJobOptions();
-    }
-}
-
 // 구글 시트에서 데이터 로드
 async function loadGoogleSheetsData() {
     const sheetId = '1upfeAj22FEoYAgtSckJLQJ-Tg6FWFxU1ea3IdjfhGzM';
@@ -127,6 +105,9 @@ async function loadGoogleSheetsData() {
             
             console.log('구글 시트 데이터 로드 완료:', allTrainingData.length, '개 항목');
             
+            // NCS직무 옵션 업데이트
+            updateNCSJobOptions();
+            
             // 날짜 범위 옵션 업데이트
             updateDateRangeOptions();
             
@@ -151,7 +132,7 @@ function updateNCSJobOptions() {
     
     const ncsJobs = [...new Set(allTrainingData.map(item => item.ncsJob).filter(job => job.trim() !== ''))];
     
-    select.innerHTML = '<option value="">NCS직무를 선택하세요</option>' +
+    select.innerHTML = '<option value="">전체 NCS직무</option>' +
         ncsJobs.map(job => `<option value="${job}">${job}</option>`).join('');
 }
 
@@ -246,7 +227,6 @@ function generateStatistics() {
     // 설정값 가져오기
     const timeGrouping = document.getElementById('timeGrouping').value;
     const metricType = document.getElementById('metricType').value;
-    const filterType = document.getElementById('filterType').value;
     
     // 필터링된 데이터 가져오기
     let filteredData = getFilteredData();
@@ -267,6 +247,9 @@ function generateStatistics() {
     // 차트 생성
     createStatisticsChart(groupedData, timeGrouping, metricType, periodText);
     
+    // 필터 요약 표시
+    showFilterSummary(filteredData);
+    
     // 통계 요약 생성
     createStatisticsSummary(filteredData, groupedData, metricType);
     
@@ -275,24 +258,70 @@ function generateStatistics() {
     document.getElementById('exportStatsBtn').style.display = 'inline-flex';
 }
 
-// 필터링된 데이터 가져오기
+// 필터링된 데이터 가져오기 (확장된 검색 필터)
 function getFilteredData() {
-    const filterType = document.getElementById('filterType').value;
     let filteredData = [...allTrainingData];
     
-    if (filterType === 'search') {
-        const keyword = document.getElementById('searchKeyword').value.trim();
-        if (keyword) {
-            filteredData = filteredData.filter(item => 
-                item.courseName.toLowerCase().includes(keyword.toLowerCase()) ||
-                item.institution.toLowerCase().includes(keyword.toLowerCase())
-            );
-        }
-    } else if (filterType === 'ncs') {
-        const ncsJob = document.getElementById('ncsJobSelect').value;
-        if (ncsJob) {
-            filteredData = filteredData.filter(item => item.ncsJob === ncsJob);
-        }
+    // 기관명 필터
+    const institution = (document.getElementById('institutionSearch').value || '').trim();
+    if (institution) {
+        filteredData = filteredData.filter(item => 
+            item.institution.toLowerCase().includes(institution.toLowerCase())
+        );
+    }
+    
+    // 과정명 필터
+    const course = (document.getElementById('courseSearch').value || '').trim();
+    if (course) {
+        filteredData = filteredData.filter(item => 
+            item.courseName.toLowerCase().includes(course.toLowerCase())
+        );
+    }
+    
+    // NCS직무 필터
+    const ncsJob = document.getElementById('ncsJobSelect').value;
+    if (ncsJob) {
+        filteredData = filteredData.filter(item => item.ncsJob === ncsJob);
+    }
+    
+    // 훈련시간 필터
+    const minHours = document.getElementById('minHours').value;
+    if (minHours) {
+        filteredData = filteredData.filter(item => 
+            parseInt(item.trainingHours) >= parseInt(minHours)
+        );
+    }
+    
+    // 시간당훈련비 필터
+    const minHourlyFee = document.getElementById('minHourlyFee').value;
+    if (minHourlyFee) {
+        filteredData = filteredData.filter(item => 
+            parseInt(item.hourlyFee.replace(/,/g, '')) >= parseInt(minHourlyFee)
+        );
+    }
+    
+    // 고급 필터: 수료율
+    const minCompletionRate = document.getElementById('minCompletionRate').value;
+    if (minCompletionRate) {
+        filteredData = filteredData.filter(item => 
+            parseFloat(item.completionRate) >= parseFloat(minCompletionRate)
+        );
+    }
+    
+    // 고급 필터: 취업률
+    const minEmploymentRate = document.getElementById('minEmploymentRate').value;
+    if (minEmploymentRate) {
+        filteredData = filteredData.filter(item => 
+            parseFloat(item.employmentRate) >= parseFloat(minEmploymentRate)
+        );
+    }
+    
+    // 고급 필터: 만족도
+    const minSatisfaction = document.getElementById('minSatisfaction').value;
+    if (minSatisfaction) {
+        filteredData = filteredData.filter(item => 
+            parseFloat(item.satisfaction) >= parseFloat(minSatisfaction)
+        );
     }
     
     // 유효한 개강일이 있는 데이터만 필터링
@@ -400,6 +429,54 @@ function groupDataByTime(data, timeGrouping) {
     });
     
     return groups;
+}
+
+// 필터 요약 표시
+function showFilterSummary(filteredData) {
+    const container = document.getElementById('filterSummary');
+    if (!container) return;
+    
+    const activeFilters = [];
+    
+    const institution = (document.getElementById('institutionSearch').value || '').trim();
+    if (institution) activeFilters.push(`기관명: "${institution}"`);
+    
+    const course = (document.getElementById('courseSearch').value || '').trim();
+    if (course) activeFilters.push(`과정명: "${course}"`);
+    
+    const ncsJob = document.getElementById('ncsJobSelect').value;
+    if (ncsJob) activeFilters.push(`NCS직무: ${ncsJob}`);
+    
+    const minHours = document.getElementById('minHours').value;
+    if (minHours) activeFilters.push(`훈련시간: ${minHours}시간 이상`);
+    
+    const minHourlyFee = document.getElementById('minHourlyFee').value;
+    if (minHourlyFee) activeFilters.push(`시간당훈련비: ${parseInt(minHourlyFee).toLocaleString()}원 이상`);
+    
+    const minCompletionRate = document.getElementById('minCompletionRate').value;
+    if (minCompletionRate) activeFilters.push(`수료율: ${minCompletionRate}% 이상`);
+    
+    const minEmploymentRate = document.getElementById('minEmploymentRate').value;
+    if (minEmploymentRate) activeFilters.push(`취업률: ${minEmploymentRate}% 이상`);
+    
+    const minSatisfaction = document.getElementById('minSatisfaction').value;
+    if (minSatisfaction) activeFilters.push(`만족도: ${minSatisfaction} 이상`);
+    
+    if (activeFilters.length === 0) {
+        container.innerHTML = `
+            <div class="result-banner">
+                <i class="fas fa-info-circle"></i>
+                전체 데이터 ${filteredData.length}건 기준 통계
+            </div>
+        `;
+    } else {
+        container.innerHTML = `
+            <div class="result-banner">
+                <i class="fas fa-filter"></i>
+                적용된 필터: ${activeFilters.join(' | ')} → ${filteredData.length}건 일치
+            </div>
+        `;
+    }
 }
 
 // 통계 차트 생성
@@ -603,11 +680,11 @@ function createStatisticsSummary(filteredData, groupedData, metricType) {
             <div class="summary-value">${totalCourses}</div>
             <div class="summary-label">총 과정 수</div>
         </div>
-        <div class="summary-card">
+        <div class="summary-card summary-card--danger">
             <div class="summary-value">${totalCapacity.toLocaleString()}</div>
             <div class="summary-label">총 모집정원</div>
         </div>
-        <div class="summary-card">
+        <div class="summary-card summary-card--success">
             <div class="summary-value">${totalConfirmed.toLocaleString()}</div>
             <div class="summary-label">총 수강확정</div>
         </div>
@@ -615,23 +692,23 @@ function createStatisticsSummary(filteredData, groupedData, metricType) {
             <div class="summary-value">${avgRecruitmentRate.toFixed(1)}%</div>
             <div class="summary-label">평균 모집률</div>
         </div>
-        <div class="summary-card">
+        <div class="summary-card summary-card--cyan">
             <div class="summary-value">${avgCompletionRate.toFixed(1)}%</div>
             <div class="summary-label">평균 수료율</div>
         </div>
-        <div class="summary-card">
+        <div class="summary-card summary-card--orange">
             <div class="summary-value">${avgEmploymentRate.toFixed(1)}%</div>
             <div class="summary-label">평균 취업률</div>
         </div>
-        <div class="summary-card">
+        <div class="summary-card summary-card--purple">
             <div class="summary-value">${avgSatisfaction.toFixed(1)}</div>
             <div class="summary-label">평균 만족도</div>
         </div>
-        <div class="summary-card">
+        <div class="summary-card summary-card--success">
             <div class="summary-value">${maxValue.toFixed(1)}</div>
             <div class="summary-label">최고값</div>
         </div>
-        <div class="summary-card">
+        <div class="summary-card summary-card--danger">
             <div class="summary-value">${minValue.toFixed(1)}</div>
             <div class="summary-label">최저값</div>
         </div>
@@ -640,6 +717,34 @@ function createStatisticsSummary(filteredData, groupedData, metricType) {
             <div class="summary-label">기간별 평균</div>
         </div>
     `;
+}
+
+// 고급 필터 토글
+function toggleAdvancedFilters() {
+    const advancedFilters = document.getElementById('advancedFilters');
+    const icon = document.getElementById('advancedFilterIcon');
+    
+    if (advancedFilters.style.display === 'none') {
+        advancedFilters.style.display = 'block';
+        icon.classList.add('rotated');
+    } else {
+        advancedFilters.style.display = 'none';
+        icon.classList.remove('rotated');
+    }
+}
+
+// 모든 필터 초기화
+function clearAllFilters() {
+    document.getElementById('institutionSearch').value = '';
+    document.getElementById('courseSearch').value = '';
+    document.getElementById('ncsJobSelect').value = '';
+    document.getElementById('minHours').value = '';
+    document.getElementById('minHourlyFee').value = '';
+    document.getElementById('minCompletionRate').value = '';
+    document.getElementById('minEmploymentRate').value = '';
+    document.getElementById('minSatisfaction').value = '';
+    
+    console.log('모든 필터가 초기화되었습니다.');
 }
 
 // 통계 내보내기

@@ -187,41 +187,37 @@ function renderSessionsList() {
             </div>
             <div class="session-details">
                 <!-- 모집 관련 정보 -->
-                <div style="grid-column: 1 / -1; margin-bottom: 8px;">
-                    <h5 style="color: #374151; font-size: 14px; font-weight: 600; margin-bottom: 8px;">📊 모집 현황</h5>
-                </div>
+                <div class="session-section-title">📊 모집 현황</div>
                 <div class="session-row">
                     <div class="session-label">모집정원</div>
-                    <div class="session-value" style="color: #dc2626; font-weight: 600;">${session.recruitmentCapacity}명</div>
+                    <div class="session-value session-value--danger">${session.recruitmentCapacity}명</div>
                 </div>
                 <div class="session-row">
                     <div class="session-label">수강확정</div>
-                    <div class="session-value" style="color: #059669; font-weight: 600;">${session.confirmedStudents}명</div>
+                    <div class="session-value session-value--success">${session.confirmedStudents}명</div>
                 </div>
                 <div class="session-row">
                     <div class="session-label">모집률</div>
-                    <div class="session-value" style="color: #3b82f6; font-weight: 600;">${session.recruitmentRate}%</div>
+                    <div class="session-value session-value--primary">${session.recruitmentRate}%</div>
                 </div>
                 
                 <!-- 성과 관련 정보 -->
-                <div style="grid-column: 1 / -1; margin: 16px 0 8px 0;">
-                    <h5 style="color: #374151; font-size: 14px; font-weight: 600; margin-bottom: 8px;">📈 성과 지표</h5>
-                </div>
+                <div class="session-section-title">📈 성과 지표</div>
                 <div class="session-row">
                     <div class="session-label">수료율</div>
-                    <div class="session-value" style="color: #0891b2; font-weight: 600;">${session.completionRate}%</div>
+                    <div class="session-value session-value--cyan">${session.completionRate}%</div>
                 </div>
                 <div class="session-row">
                     <div class="session-label">6개월취업률</div>
-                    <div class="session-value" style="color: #ea580c; font-weight: 600;">${session.employmentRate}%</div>
+                    <div class="session-value session-value--orange">${session.employmentRate}%</div>
                 </div>
                 <div class="session-row">
                     <div class="session-label">만족도</div>
-                    <div class="session-value" style="color: #7c3aed; font-weight: 600;">${session.satisfaction}</div>
+                    <div class="session-value session-value--purple">${session.satisfaction}</div>
                 </div>
                 <div class="session-row">
                     <div class="session-label">평가인원</div>
-                    <div class="session-value" style="color: #6b7280; font-weight: 600;">${session.evaluators}명</div>
+                    <div class="session-value session-value--muted">${session.evaluators}명</div>
                 </div>
             </div>
         </div>
@@ -430,29 +426,26 @@ function addStatisticsSummary(totalConfirmed, totalCapacity, avgSatisfaction, av
     const chartContainer = document.querySelector('.chart-container');
     
     const summaryHTML = `
-        <div style="margin-top: 20px; padding: 16px; background: #f8fafc; border-radius: 8px; border: 1px solid #e5e7eb;">
-            <h4 style="margin-bottom: 12px; color: #1f2937; font-size: 16px; font-weight: 600;">📊 통계 요약</h4>
-            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px;">
-                <div style="text-align: center; padding: 8px; background: white; border-radius: 6px; border: 1px solid #e5e7eb;">
-                    <div style="font-size: 20px; font-weight: bold; color: #059669;">${totalConfirmed}명</div>
-                    <div style="font-size: 12px; color: #6b7280;">총 수강확정인원</div>
-                </div>
-                <div style="text-align: center; padding: 8px; background: white; border-radius: 6px; border: 1px solid #e5e7eb;">
-                    <div style="font-size: 20px; font-weight: bold; color: #dc2626;">${totalCapacity}명</div>
-                    <div style="font-size: 12px; color: #6b7280;">총 모집정원</div>
-                </div>
-                <div style="text-align: center; padding: 8px; background: white; border-radius: 6px; border: 1px solid #e5e7eb;">
-                    <div style="font-size: 20px; font-weight: bold; color: #7c3aed;">${avgSatisfaction}</div>
-                    <div style="font-size: 12px; color: #6b7280;">평균 만족도</div>
-                </div>
-                <div style="text-align: center; padding: 8px; background: white; border-radius: 6px; border: 1px solid #e5e7eb;">
-                    <div style="font-size: 20px; font-weight: bold; color: #0891b2;">${avgCompletionRate}%</div>
-                    <div style="font-size: 12px; color: #6b7280;">평균 수료율</div>
-                </div>
-                <div style="text-align: center; padding: 8px; background: white; border-radius: 6px; border: 1px solid #e5e7eb;">
-                    <div style="font-size: 20px; font-weight: bold; color: #ea580c;">${avgEmploymentRate}%</div>
-                    <div style="font-size: 12px; color: #6b7280;">평균 취업률</div>
-                </div>
+        <div class="stats-summary" style="margin-top: 24px;">
+            <div class="summary-card summary-card--success">
+                <div class="summary-value">${totalConfirmed}명</div>
+                <div class="summary-label">총 수강확정인원</div>
+            </div>
+            <div class="summary-card summary-card--danger">
+                <div class="summary-value">${totalCapacity}명</div>
+                <div class="summary-label">총 모집정원</div>
+            </div>
+            <div class="summary-card summary-card--purple">
+                <div class="summary-value">${avgSatisfaction}</div>
+                <div class="summary-label">평균 만족도</div>
+            </div>
+            <div class="summary-card summary-card--cyan">
+                <div class="summary-value">${avgCompletionRate}%</div>
+                <div class="summary-label">평균 수료율</div>
+            </div>
+            <div class="summary-card summary-card--orange">
+                <div class="summary-value">${avgEmploymentRate}%</div>
+                <div class="summary-label">평균 취업률</div>
             </div>
         </div>
     `;

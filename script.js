@@ -466,10 +466,10 @@ function toggleAdvancedFilters() {
     
     if (advancedFilters.style.display === 'none') {
         advancedFilters.style.display = 'block';
-        icon.style.transform = 'rotate(180deg)';
+        icon.classList.add('rotated');
     } else {
         advancedFilters.style.display = 'none';
-        icon.style.transform = 'rotate(0deg)';
+        icon.classList.remove('rotated');
     }
 }
 
