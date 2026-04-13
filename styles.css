@@ -364,6 +364,25 @@ body {
     gap: 16px;
 }
 
+/* 구간 입력 (최소 ~ 최대) */
+.range-input {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.range-input .form-input {
+    flex: 1;
+    min-width: 0;
+}
+
+.range-separator {
+    color: var(--gray-400);
+    font-weight: 600;
+    font-size: 14px;
+    flex-shrink: 0;
+}
+
 /* ===== 필터 섹션 ===== */
 .filter-section {
     margin-top: 20px;

@@ -126,7 +126,9 @@ function performSearch() {
     const course = document.getElementById('courseSearch').value || '';
     const ncsJob = document.getElementById('ncsJobSelect').value || '';
     const minHours = document.getElementById('minHours').value || '';
+    const maxHours = document.getElementById('maxHours').value || '';
     const minHourlyFee = document.getElementById('minHourlyFee').value || '';
+    const maxHourlyFee = document.getElementById('maxHourlyFee').value || '';
     
     // 고급 필터
     const minCompletionRate = document.getElementById('minCompletionRate').value || '';
@@ -160,9 +162,21 @@ function performSearch() {
         );
     }
     
+    if (maxHours) {
+        filteredData = filteredData.filter(item => 
+            parseInt(item.trainingHours) <= parseInt(maxHours)
+        );
+    }
+    
     if (minHourlyFee) {
         filteredData = filteredData.filter(item => 
             parseInt(item.hourlyFee.replace(/,/g, '')) >= parseInt(minHourlyFee)
+        );
+    }
+    
+    if (maxHourlyFee) {
+        filteredData = filteredData.filter(item => 
+            parseInt(item.hourlyFee.replace(/,/g, '')) <= parseInt(maxHourlyFee)
         );
     }
     
@@ -223,7 +237,9 @@ function clearSearch() {
     document.getElementById('courseSearch').value = '';
     document.getElementById('ncsJobSelect').value = '';
     document.getElementById('minHours').value = '';
+    document.getElementById('maxHours').value = '';
     document.getElementById('minHourlyFee').value = '';
+    document.getElementById('maxHourlyFee').value = '';
     
     // 고급 필터 초기화
     document.getElementById('minCompletionRate').value = '';

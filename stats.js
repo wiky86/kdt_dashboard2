@@ -292,11 +292,25 @@ function getFilteredData() {
         );
     }
     
+    const maxHours = document.getElementById('maxHours').value;
+    if (maxHours) {
+        filteredData = filteredData.filter(item => 
+            parseInt(item.trainingHours) <= parseInt(maxHours)
+        );
+    }
+    
     // 시간당훈련비 필터
     const minHourlyFee = document.getElementById('minHourlyFee').value;
     if (minHourlyFee) {
         filteredData = filteredData.filter(item => 
             parseInt(item.hourlyFee.replace(/,/g, '')) >= parseInt(minHourlyFee)
+        );
+    }
+    
+    const maxHourlyFee = document.getElementById('maxHourlyFee').value;
+    if (maxHourlyFee) {
+        filteredData = filteredData.filter(item => 
+            parseInt(item.hourlyFee.replace(/,/g, '')) <= parseInt(maxHourlyFee)
         );
     }
     
@@ -448,10 +462,24 @@ function showFilterSummary(filteredData) {
     if (ncsJob) activeFilters.push(`NCS직무: ${ncsJob}`);
     
     const minHours = document.getElementById('minHours').value;
-    if (minHours) activeFilters.push(`훈련시간: ${minHours}시간 이상`);
+    const maxHours = document.getElementById('maxHours').value;
+    if (minHours && maxHours) {
+        activeFilters.push(`훈련시간: ${minHours}~${maxHours}시간`);
+    } else if (minHours) {
+        activeFilters.push(`훈련시간: ${minHours}시간 이상`);
+    } else if (maxHours) {
+        activeFilters.push(`훈련시간: ${maxHours}시간 이하`);
+    }
     
     const minHourlyFee = document.getElementById('minHourlyFee').value;
-    if (minHourlyFee) activeFilters.push(`시간당훈련비: ${parseInt(minHourlyFee).toLocaleString()}원 이상`);
+    const maxHourlyFee = document.getElementById('maxHourlyFee').value;
+    if (minHourlyFee && maxHourlyFee) {
+        activeFilters.push(`시간당훈련비: ${parseInt(minHourlyFee).toLocaleString()}~${parseInt(maxHourlyFee).toLocaleString()}원`);
+    } else if (minHourlyFee) {
+        activeFilters.push(`시간당훈련비: ${parseInt(minHourlyFee).toLocaleString()}원 이상`);
+    } else if (maxHourlyFee) {
+        activeFilters.push(`시간당훈련비: ${parseInt(maxHourlyFee).toLocaleString()}원 이하`);
+    }
     
     const minCompletionRate = document.getElementById('minCompletionRate').value;
     if (minCompletionRate) activeFilters.push(`수료율: ${minCompletionRate}% 이상`);
@@ -739,7 +767,9 @@ function clearAllFilters() {
     document.getElementById('courseSearch').value = '';
     document.getElementById('ncsJobSelect').value = '';
     document.getElementById('minHours').value = '';
+    document.getElementById('maxHours').value = '';
     document.getElementById('minHourlyFee').value = '';
+    document.getElementById('maxHourlyFee').value = '';
     document.getElementById('minCompletionRate').value = '';
     document.getElementById('minEmploymentRate').value = '';
     document.getElementById('minSatisfaction').value = '';

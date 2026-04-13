@@ -58,12 +58,20 @@
                     </select>
                 </div>
                 <div class="form-group">
-                    <label class="form-label">훈련시간 (시간 이상)</label>
-                    <input type="number" id="minHours" placeholder="최소 시간" class="form-input">
+                    <label class="form-label">훈련시간</label>
+                    <div class="range-input">
+                        <input type="number" id="minHours" placeholder="최소" class="form-input">
+                        <span class="range-separator">~</span>
+                        <input type="number" id="maxHours" placeholder="최대" class="form-input">
+                    </div>
                 </div>
                 <div class="form-group">
-                    <label class="form-label">시간당훈련비 (원 이상)</label>
-                    <input type="number" id="minHourlyFee" placeholder="최소 비용" class="form-input">
+                    <label class="form-label">시간당훈련비 (원)</label>
+                    <div class="range-input">
+                        <input type="number" id="minHourlyFee" placeholder="최소" class="form-input">
+                        <span class="range-separator">~</span>
+                        <input type="number" id="maxHourlyFee" placeholder="최대" class="form-input">
+                    </div>
                 </div>
             </div>
             
