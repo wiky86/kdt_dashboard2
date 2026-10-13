@@ -258,3 +258,23 @@ def test_find_page_link():
     assert find_page_link(LIST_HTML, 3) == ("onclick", "fn_egov_link_page(11)")   # 번호 없으면 '다음'
     last = LIST_HTML.replace('onclick="fn_egov_link_page(11)"', 'class="disabled"')
     assert find_page_link(last, 3) is None
+
+
+def test_real_site_label_formats():
+    # 실제 고용24 상세 페이지 표기 (값이 채워진 형태)
+    got = parse_detail_text("수강확정인원 16명 / 수강신청인원 18명 / 모집인원 25명 훈련비 7,745,400원 만족도 4.9 (15) 수강평 3개 "
+                            "기본정보 훈련유형 훈련기간 2024-04-23 ~ 2024-10-11 (2회차) 훈련시간 113일, 총 900시간")
+    assert got["confirmed"] == 16 and got["applicants"] == 18 and got["capacity"] == 25
+    assert got["satisfaction"] == 4.9 and got["evaluators"] == 15
+    assert got["training_hours"] == 900 and got["session"] == 2
+    # 없는 회차는 값이 비어서 개강일을 못 읽는다
+    empty = parse_detail_text("수강확정인원 명 / 수강신청인원 명 / 모집인원 명 훈련비 원 만족도 () 수강평 개 훈련기간 ~ (회차) 훈련시간 일, 총 0시간")
+    assert "start_date" not in empty
+
+
+def test_find_page_size_control():
+    from crawler.list_crawler import find_page_size_control
+    html = ('<span><select name="pageRow" id="pageRow"><option value="10" selected>10개씩</option>'
+            '<option value="100">100개씩</option></select></span>'
+            '<button type="button" id="subOptSearchBtn" onclick="sort();">적용</button>')
+    assert find_page_size_control("<div>" + html + "</div>") == ("pageRow", "100", "subOptSearchBtn")

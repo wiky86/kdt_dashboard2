@@ -193,6 +193,30 @@ def find_page_link(html: str, target: int) -> Optional[tuple[str, str]]:
     return None
 
 
+def find_page_size_control(html: str) -> Optional[tuple[str, str, str]]:
+    """'100개' 옵션이 있는 select의 id, 그 option 값, 근처 '적용' 버튼 id."""
+    from bs4 import BeautifulSoup
+
+    soup = BeautifulSoup(html or "", "html.parser")
+    for sel in soup.find_all("select"):
+        opt = next((o for o in sel.find_all("option") if re.search(r"100\s*개", o.get_text())), None)
+        if not opt or not sel.get("id"):
+            continue
+        btn_id = ""
+        scope = sel
+        for _ in range(4):
+            scope = scope.parent
+            if scope is None:
+                break
+            btn = next((b for b in scope.find_all(["button", "a", "input"])
+                        if re.search(r"적용", b.get_text() or b.get("value", ""))), None)
+            if btn is not None:
+                btn_id = btn.get("id", "")
+                break
+        return sel["id"], opt.get("value", "100"), btn_id
+    return None
+
+
 def _notice(title: str, msg: str) -> None:
     import os
     if os.environ.get("GITHUB_ACTIONS"):
@@ -324,26 +348,37 @@ class ListCrawler:
         return html
 
     def _set_page_size(self, page) -> None:
-        """'100개씩' 선택 후 '적용'. 사이트 스크립트에 기대지 않고 Playwright 동작만 쓴다."""
+        """'100개씩' 선택 후 '적용'.
+
+        고용24 페이지는 사이트 스크립트가 브라우저 기본 객체를 덮어써서 Playwright의
+        select/텍스트 읽기 기능 일부가 깨진다. 그래서 페이지 안에서 값을 직접 넣고
+        버튼을 누른 뒤, 결과는 반환값 대신 HTML로 확인한다.
+        """
+        html = self._html(page)
+        info = find_page_size_control(html)
+        if not info:
+            log.info("페이지 크기 선택 상자 없음")
+            _notice("페이지 크기", "100개 옵션이 있는 select 없음: " + page_size_hint(html))
+            return
+        select_id, value, button_id = info
+        script = (
+            "(() => { const s = document.getElementById(%r); if (!s) return;"
+            " s.value = %r; s.dispatchEvent(new Event('change', {bubbles: true}));"
+            " const b = %s; if (b) b.click(); })()"
+        ) % (select_id, value,
+             f"document.getElementById({button_id!r})" if button_id else
+             "[...document.querySelectorAll('button, a, input')].find(e => /적용/.test(e.innerText || e.value || ''))")
         try:
-            sel = page.locator("select").filter(has=page.locator("option", has_text=re.compile(r"100\s*개"))).first
-            if not sel.count():
-                log.info("페이지 크기 선택 상자 없음")
-                _notice("페이지 크기", "100개 옵션이 있는 select 없음: " + page_size_hint(self._html(page)))
-                return
-            label = next(o.strip() for o in sel.locator("option").all_inner_texts() if re.search(r"100\s*개", o))
-            sel.select_option(label=label)
-            btn = page.locator("a, button, input[type=button], input[type=submit]").filter(
-                has_text=re.compile(r"^\s*적용\s*$")).first
-            if btn.count():
-                btn.click()
-            else:
-                page.locator("input[value='적용']").first.click()
-            log.info("페이지 크기 변경: %s", label)
-            self._settle(page)
-        except Exception as e:  # noqa: BLE001
-            log.warning("페이지 크기 변경 실패(무시): %s", str(e)[:200])
-            _notice("페이지 크기", f"실패 {str(e)[:200]} / " + page_size_hint(self._html(page)))
+            page.evaluate(script)
+        except Exception as e:  # noqa: BLE001 - 반환값 직렬화 오류는 무시 (동작은 이미 실행됨)
+            log.info("페이지 크기 스크립트 반환 오류(무시): %s", str(e)[:120])
+        self._settle(page)
+        after = self._html(page)
+        ok = bool(re.search(rf'<option[^>]*value="{re.escape(value)}"[^>]*selected', after)) or \
+            len(set(TRACSE_ID_ANY_RE.findall(after))) > 15
+        log.info("페이지 크기 변경: %s", "성공" if ok else "확인 안 됨")
+        if not ok:
+            _notice("페이지 크기", "적용 후에도 100개로 바뀌지 않음 (10개씩 계속 진행)")
 
     def _go_next(self, page, html: str, target: int) -> bool:
         """HTML에서 target 페이지 링크(없으면 '다음')를 찾아 누른다."""
