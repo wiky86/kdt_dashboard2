@@ -223,3 +223,38 @@ def test_run_end_to_end(monkeypatch, tmp_path):
     assert r2["hourly_fee"] == round(7745400 / 900) and r2["recruitment_rate"] == 64.0
     assert r2["crse_tracse_se"] == "C0104" and r2["source"] == "crawler"
     assert (tmp_path / "out.csv").exists()
+
+
+# ---------------------------------------------------------------------------
+# 목록 HTML 분석 (페이지 안 스크립트 없이)
+# ---------------------------------------------------------------------------
+
+LIST_HTML = """<html><body><ul>
+<li><div class="box">
+  <a href="javascript:void(0)" title="패스트캠퍼스천호학원 훈련기관 정보 새 창 열림" onclick="fnInst('500020039555')">패스트캠퍼스천호학원</a>
+  <span>5년인증 우수훈련기관</span>
+  <a href="javascript:void(0)" title="자바 개발자 양성과정 훈련과정 정보 새 창 열림"
+     onclick="fnTrnnCrsDtl('AIG20233000936060','3','C0104','500020039555');">자바 개발자 양성과정</a>
+  <p>모집중</p><p>2026-10-13 ~ 2027-03-20 (3회차)</p><p>113일, 총900시간</p>
+  <a href="javascript:void(0)" onclick="fnCompare('AIG20233000936060')">비교하기</a>
+</div></li></ul>
+<div class="paging"><strong>1</strong> <a href="javascript:void(0)" onclick="fn_egov_link_page(2); return false;">2</a>
+<a href="javascript:void(0)" onclick="fn_egov_link_page(11)">다음</a></div></body></html>"""
+
+
+def test_parse_list_html():
+    from crawler.list_crawler import parse_list_html
+    refs = parse_list_html(LIST_HTML)
+    assert len(refs) == 1
+    r = refs[0]
+    assert (r.tracse_id, r.trainst_cstmr_id, r.tracse_tme, r.crse_tracse_se) == \
+        ("AIG20233000936060", "500020039555", 3, "C0104")
+    assert r.title == "자바 개발자 양성과정" and r.institution == "패스트캠퍼스천호학원"
+
+
+def test_find_page_link():
+    from crawler.list_crawler import find_page_link
+    assert find_page_link(LIST_HTML, 2) == ("onclick", "fn_egov_link_page(2); return false;")
+    assert find_page_link(LIST_HTML, 3) == ("onclick", "fn_egov_link_page(11)")   # 번호 없으면 '다음'
+    last = LIST_HTML.replace('onclick="fn_egov_link_page(11)"', 'class="disabled"')
+    assert find_page_link(last, 3) is None
