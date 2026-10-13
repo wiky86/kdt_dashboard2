@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>맞춤 조회 - 유비온 디지털교육센터</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="container container--wide">
+        <!-- 헤더 -->
+        <div class="header">
+            <h1><i class="fas fa-magnifying-glass-chart"></i> 맞춤 조회</h1>
+            <div class="header-controls">
+                <a href="index.html" class="btn"><i class="fas fa-list"></i> 과정 목록</a>
+                <a href="stats.html" class="btn"><i class="fas fa-chart-bar"></i> 통계 분석</a>
+            </div>
+        </div>
+
+        <!-- 자주 쓰는 조회 -->
+        <div class="card">
+            <div class="card-header-row">
+                <h3><i class="fas fa-bolt"></i> 자주 쓰는 조회</h3>
+                <span class="hint">누르면 아래 조건이 채워지고 바로 조회돼요</span>
+            </div>
+            <div class="preset-grid" id="presetGrid"></div>
+        </div>
+
+        <!-- 조회 조건 -->
+        <div class="card">
+            <div class="card-header-row">
+                <h3><i class="fas fa-sliders"></i> 조회 조건</h3>
+                <div class="btn-group">
+                    <button class="btn btn-primary" id="runBtn"><i class="fas fa-search"></i> 조회</button>
+                    <button class="btn" id="resetBtn"><i class="fas fa-rotate-left"></i> 초기화</button>
+                </div>
+            </div>
+
+            <div class="form-row-3">
+                <div class="form-group">
+                    <label class="form-label" for="yearSelect">개강 연도</label>
+                    <select id="yearSelect" class="form-select">
+                        <option value="">전체 연도</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">개강일 기간</label>
+                    <div class="range-input">
+                        <input type="date" id="dateFrom" class="form-input" aria-label="개강일 시작">
+                        <span class="range-separator">~</span>
+                        <input type="date" id="dateTo" class="form-input" aria-label="개강일 끝">
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label class="form-label" for="ncsSelect">NCS직무</label>
+                    <select id="ncsSelect" class="form-select">
+                        <option value="">전체 NCS직무</option>
+                    </select>
+                </div>
+            </div>
+
+            <div class="form-row-3">
+                <div class="form-group">
+                    <label class="form-label" for="instInput">기관명 (포함)</label>
+                    <input type="text" id="instInput" class="form-input" placeholder="예: 멀티캠퍼스">
+                </div>
+                <div class="form-group">
+                    <label class="form-label" for="courseInput">과정명 (포함)</label>
+                    <input type="text" id="courseInput" class="form-input" placeholder="예: 데이터">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">개강 상태</label>
+                    <div class="segmented" id="startedSeg" role="radiogroup" aria-label="개강 상태">
+                        <button type="button" data-value="all" role="radio">전체</button>
+                        <button type="button" data-value="started" role="radio">개강일 지남</button>
+                        <button type="button" data-value="upcoming" role="radio">개강 예정</button>
+                    </div>
+                </div>
+            </div>
+
+            <div class="filter-section">
+                <div class="filter-title"><i class="fas fa-code-branch"></i> 세부 조건 <span class="hint">(모두 만족하는 회차만)</span></div>
+                <div id="conditionList" class="condition-list"></div>
+                <button class="btn btn-sm" id="addCondBtn" type="button"><i class="fas fa-plus"></i> 조건 추가</button>
+            </div>
+        </div>
+
+        <!-- 결과 -->
+        <div class="card" id="resultCard">
+            <div class="card-header-row">
+                <h3 id="resultTitle"><i class="fas fa-table"></i> 조회 결과</h3>
+                <div class="btn-group">
+                    <div class="segmented" id="viewSeg" role="radiogroup" aria-label="보기 방식">
+                        <button type="button" data-value="session" role="radio">회차별</button>
+                        <button type="button" data-value="course" role="radio">과정별</button>
+                        <button type="button" data-value="institution" role="radio">기관별</button>
+                    </div>
+                    <button class="btn" id="copyLinkBtn" title="이 조회 조건을 링크로 복사"><i class="fas fa-link"></i> 링크 복사</button>
+                    <button class="btn" id="exportBtn"><i class="fas fa-file-csv"></i> CSV</button>
+                </div>
+            </div>
+            <p class="result-desc" id="resultDesc"></p>
+            <div class="stats-summary report-summary" id="summary"></div>
+            <div id="resultArea">
+                <div class="loading"><i class="fas fa-spinner fa-spin"></i> 데이터를 불러오는 중...</div>
+            </div>
+        </div>
+    </div>
+
+    <div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+    <script src="config.js"></script>
+    <script src="data.js"></script>
+    <script src="reports.js"></script>
+</body>
+</html>
