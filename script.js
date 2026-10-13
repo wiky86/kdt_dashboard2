@@ -5,7 +5,7 @@ let newTabData = [];
 document.addEventListener('DOMContentLoaded', function() {
     console.log('페이지 로드 완료');
     
-    // 구글 시트에서 데이터 로드
+    // Supabase에서 데이터 로드
     loadGoogleSheetsData();
     
     console.log('초기 렌더링 완료');
@@ -269,28 +269,20 @@ function refreshData() {
     // 로딩 표시
     document.getElementById('searchResults').innerHTML = '<div class="loading"><i class="fas fa-spinner fa-spin"></i> 훈련 과정 데이터를 불러오는 중...</div>';
     
-    // 구글 시트에서 데이터 로드
+    // Supabase에서 데이터 로드
     loadGoogleSheetsData();
 }
 
-// 구글 시트에서 데이터 로드
+// Supabase에서 데이터 로드
 async function loadGoogleSheetsData() {
-    const sheetId = '1upfeAj22FEoYAgtSckJLQJ-Tg6FWFxU1ea3IdjfhGzM';
-    const apiKey = 'AIzaSyD-zp3ID1MdWeMMQoSMTzHsGcvXZVnNe4k';
     
     try {
-        console.log('구글 시트에서 데이터 로드 시작');
+        console.log('데이터 로드 시작');
         
-        // 시트4에서 훈련 과정 데이터 로드
-        const sheetRange = '시트4!A:Q';
-        const url = `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/${sheetRange}?key=${apiKey}`;
+        // Supabase에서 데이터 로드 (data.js)
+        const rows = await loadTrainingRows();
         
-        const response = await fetch(url);
-        const data = await response.json();
-        
-        if (data.values && data.values.length > 1) {
-            const headers = data.values[0];
-            const rows = data.values.slice(1);
+        if (rows.length > 0) {
             
             // 데이터 파싱
             newTabData = rows.map((row, index) => ({
@@ -314,18 +306,18 @@ async function loadGoogleSheetsData() {
                 employmentRate: row[16] || ''
             }));
             
-            console.log('구글 시트 데이터 로드 완료:', newTabData.length, '개 항목');
+            console.log('데이터 로드 완료:', newTabData.length, '개 항목');
             
             // UI 업데이트
             renderNewTabData();
             
         } else {
-            console.log('시트4에 데이터가 없습니다.');
-            document.getElementById('searchResults').innerHTML = '<div class="loading">구글 시트4에 데이터가 없습니다.</div>';
+            console.log('저장된 데이터가 없습니다.');
+            document.getElementById('searchResults').innerHTML = '<div class="loading">저장된 데이터가 없습니다.</div>';
         }
         
     } catch (error) {
-        console.error('구글 시트 데이터 로드 오류:', error);
+        console.error('데이터 로드 오류:', error);
         document.getElementById('searchResults').innerHTML = `<div class="loading">데이터 로드 오류: ${error.message}</div>`;
     }
 }

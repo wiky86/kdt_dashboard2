@@ -26,18 +26,10 @@ async function loadAllTrainingData(groupKey) {
     try {
         console.log('훈련 데이터 로드 시작');
         
-        // 구글 시트에서 데이터 로드
-        const sheetId = '1upfeAj22FEoYAgtSckJLQJ-Tg6FWFxU1ea3IdjfhGzM';
-        const apiKey = 'AIzaSyD-zp3ID1MdWeMMQoSMTzHsGcvXZVnNe4k';
-        const sheetRange = '시트4!A:Q';
-        const url = `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/${sheetRange}?key=${apiKey}`;
+        // Supabase에서 데이터 로드 (data.js)
+        const rows = await loadTrainingRows();
         
-        const response = await fetch(url);
-        const data = await response.json();
-        
-        if (data.values && data.values.length > 1) {
-            const headers = data.values[0];
-            const rows = data.values.slice(1);
+        if (rows.length > 0) {
             
             // 데이터 파싱
             allTrainingData = rows.map((row, index) => ({
@@ -61,7 +53,7 @@ async function loadAllTrainingData(groupKey) {
                 employmentRate: row[16] || ''
             }));
             
-            console.log('구글 시트 데이터 로드 완료:', allTrainingData.length, '개 항목');
+            console.log('데이터 로드 완료:', allTrainingData.length, '개 항목');
             
             // 그룹 키로 해당 데이터 찾기
             const [institution, courseName, trainingFee] = groupKey.split('|');
@@ -105,8 +97,8 @@ async function loadAllTrainingData(groupKey) {
             renderDetailPage();
             
         } else {
-            console.log('시트4에 데이터가 없습니다.');
-            showError('구글 시트4에 데이터가 없습니다.');
+            console.log('저장된 데이터가 없습니다.');
+            showError('저장된 데이터가 없습니다.');
         }
         
     } catch (error) {
