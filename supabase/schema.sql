@@ -7,6 +7,7 @@ create table if not exists public.training_sessions (
     -- 고용24 식별자 (구글 시트에서 옮겨온 옛 데이터는 null)
     tracse_id           text,            -- 훈련과정 ID (예: AIG20233000936060)
     trainst_cstmr_id    text,            -- 훈련기관 ID (예: 500020039555)
+    crse_tracse_se      text,            -- 훈련유형 코드 (KDT: C0104)
     session             integer not null, -- 회차
 
     institution         text not null,   -- 기관명
@@ -32,8 +33,7 @@ create table if not exists public.training_sessions (
     employment_rate_3m  numeric(6,1),    -- 3개월 취업률 %
     employment_rate_6m  numeric(6,1),    -- 6개월 취업률 %
 
-    source              text not null default 'api',  -- api | sheet_migration
-    api_synced_at       timestamptz,
+    source              text not null default 'crawler',  -- crawler | sheet_migration
     web_scraped_at      timestamptz,
     created_at          timestamptz not null default now(),
     updated_at          timestamptz not null default now()
@@ -106,3 +106,13 @@ begin
 end $$;
 
 revoke all on function public.merge_legacy_rows() from public, anon, authenticated;
+
+-- 상세 페이지가 없던 회차(폐강 등) 기록: 매일 다시 열어보지 않도록
+create table if not exists public.crawl_skips (
+    tracse_id        text not null,
+    trainst_cstmr_id text not null,
+    session          integer not null,
+    checked_at       timestamptz not null default now(),
+    primary key (tracse_id, trainst_cstmr_id, session)
+);
+alter table public.crawl_skips enable row level security;  -- 정책 없음 = service_role만 접근

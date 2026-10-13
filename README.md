@@ -26,7 +26,7 @@
 - **차트 라이브러리**: Chart.js
 - **아이콘**: Font Awesome
 - **데이터베이스**: Supabase (PostgreSQL)
-- **데이터 수집**: Python (고용24 오픈API + 상세 페이지 보충 크롤링), GitHub Actions
+- **데이터 수집**: Python (고용24 웹페이지 크롤링, Playwright), GitHub Actions
 - **스타일링**: shadcn/ui 기반 커스텀 CSS
 
 ## 📁 프로젝트 구조
@@ -74,7 +74,7 @@
 
 ## 🔄 데이터 플로우
 
-1. **수집 (평일 새벽)** → 고용24 오픈API + 상세 페이지 → Supabase 저장
+1. **수집 (평일 새벽)** → 고용24 목록·상세 페이지 크롤링 → Supabase 저장
 2. **페이지 로드** → Supabase REST API 호출
 3. **데이터 파싱** → JavaScript 객체로 변환
 4. **UI 렌더링** → 검색 결과 및 필터 옵션 표시

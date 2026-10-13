@@ -1,12 +1,18 @@
-"""KDT 훈련과정 수집기: 고용24 오픈API → (부족한 값만) 상세 페이지 → Supabase.
+"""KDT 훈련과정 수집기: 고용24 웹페이지 크롤링 → Supabase.
+
+1. KDT 목록 페이지를 브라우저(Playwright)로 넘기며 과정을 모은다.
+2. DB에 이미 있는 과정과 합친 뒤, 과정마다 필요한 회차의 상세 페이지를 읽는다.
+   - 아직 없는 회차 (처음 보는 과정이면 1회차부터 전부)
+   - 값이 아직 바뀌는 회차 (종강 후 9개월 이내 또는 값이 빈 회차)
+   - 진행 중인 과정은 '마지막 회차 + 1'도 확인 (새 회차 발견)
+3. 회차별 값을 Supabase에 저장한다. 저장된 값은 빈 값으로 덮어쓰지 않는다.
 
 사용 예:
-    python -m crawler.main                 # 평소 실행 (최근 약 15개월 ~ 6개월 뒤 개강 회차)
-    python -m crawler.main --full          # 처음 한 번: KDT 시작(2020-12)부터 전부
-    python -m crawler.main --inspect out/  # API 원본·상세 페이지 샘플 저장 (필드 확인용)
-    python -m crawler.main --dry-run       # DB에 쓰지 않고 결과만 확인
+    python -m crawler.main                     # 평소 실행
+    python -m crawler.main --max-pages 6000    # 처음: 상세 페이지를 많이
+    python -m crawler.main --inspect out/x --dry-run --max-pages 10   # 시험 실행
 
-환경변수: WORK24_API_KEY, SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY
+환경변수: SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY
 """
 
 from __future__ import annotations
@@ -23,19 +29,20 @@ from typing import Any, Optional
 
 from .db import COLUMNS, SupabaseDB
 from .detail_scraper import DetailScraper
-from .work24_api import KDT_CODE, ApiError, Work24Api, pick
+from .list_crawler import KDT_CODE, LIST_URL, CourseRef, ListCrawler
 
 log = logging.getLogger("collector")
 
 KST = timezone(timedelta(hours=9))
-KDT_START = date(2020, 12, 1)
 
-COURSE_LEVEL = ("training_fee", "ncs_code", "ncs_job", "ncs_level", "training_days", "training_hours")
-SESSION_SCRAPE_FIELDS = ("evaluators", "confirmed")
+COURSE_LEVEL = ("ncs_code", "ncs_job", "ncs_level", "training_days", "training_hours")
+SESSION_FIELDS = ("start_date", "end_date", "training_fee", "capacity", "applicants", "confirmed",
+                  "completed", "satisfaction", "evaluators", "completion_rate",
+                  "employment_rate_3m", "employment_rate_6m")
 
 
 # ---------------------------------------------------------------------------
-# 값 정리
+# 값 정리 (시트 이전 스크립트도 사용)
 # ---------------------------------------------------------------------------
 
 def to_int(v: Any) -> Optional[int]:
@@ -51,7 +58,6 @@ def to_int(v: Any) -> Optional[int]:
 
 
 def to_float(v: Any) -> Optional[float]:
-    """'53.3', '79.2%', '0' 등 → float. 'A'(개설예정) 같은 코드값은 None."""
     if v is None:
         return None
     s = str(v).strip().replace("%", "").replace(",", "")
@@ -70,38 +76,6 @@ def to_date(v: Any) -> Optional[str]:
     return None
 
 
-def from_api(item: dict) -> dict:
-    """오픈API 레코드(목록·일정 공통) → DB 컬럼 dict. 값이 없는 키는 넣지 않는다."""
-    raw = {
-        "tracse_id": pick(item, "tracse_id"),
-        "trainst_cstmr_id": pick(item, "trainst_cstmr_id"),
-        "session": to_int(pick(item, "session")),
-        "course_name": pick(item, "course_name"),
-        "institution": pick(item, "institution"),
-        "training_fee": to_int(pick(item, "training_fee")),
-        "capacity": to_int(pick(item, "capacity")),
-        "applicants": to_int(pick(item, "applicants")),
-        "confirmed": to_int(pick(item, "confirmed")),
-        "completed": to_int(pick(item, "completed")),
-        "satisfaction": to_float(pick(item, "satisfaction")),
-        "employment_rate_3m": to_float(pick(item, "employment_rate_3m")),
-        "employment_rate_6m": to_float(pick(item, "employment_rate_6m")),
-        "start_date": to_date(pick(item, "start_date")),
-        "end_date": to_date(pick(item, "end_date")),
-        "ncs_code": pick(item, "ncs_code"),
-        "training_hours": to_int(pick(item, "training_hours")),
-        "training_days": to_int(pick(item, "training_days")),
-        "ncs_job": pick(item, "ncs_job"),
-        "ncs_level": to_int(pick(item, "ncs_level")),
-    }
-    if raw["satisfaction"] == 0:
-        raw["satisfaction"] = None  # 평가 전
-    for k in ("course_name", "institution", "ncs_job"):
-        if isinstance(raw[k], str):
-            raw[k] = re.sub(r"\s+", " ", raw[k]).strip()
-    return {k: v for k, v in raw.items() if v not in (None, "")}
-
-
 def merge(base: dict, new: dict) -> dict:
     """new의 값이 있는 칸만 base 위에 덮어쓴다 (None으로 지우지 않음)."""
     out = dict(base)
@@ -118,15 +92,11 @@ def fill_derived(row: dict) -> None:
     cap, conf, done = row.get("capacity"), row.get("confirmed"), row.get("completed")
     if cap and conf is not None:
         row["recruitment_rate"] = round(conf / cap * 100, 1)
-    if conf and done is not None:
+    if conf and done is not None and row.get("completion_rate") is None:
         row["completion_rate"] = round(done / conf * 100, 1)
 
 
-def key_of(row: dict) -> tuple:
-    return (row["tracse_id"], row["trainst_cstmr_id"], int(row["session"]))
-
-
-def days_ago(ts: Optional[str], now: datetime) -> float:
+def days_since(ts: Optional[str], now: datetime) -> float:
     if not ts:
         return 1e9
     try:
@@ -136,28 +106,69 @@ def days_ago(ts: Optional[str], now: datetime) -> float:
     return (now - t).total_seconds() / 86400
 
 
+def is_live(row: dict, today: date) -> bool:
+    """값이 아직 바뀔 수 있는 회차인가 (모집 중·진행 중·종강 후 9개월 이내, 또는 핵심 값이 빔)."""
+    ed = row.get("end_date")
+    if not ed:
+        return True
+    if date.fromisoformat(ed) >= today - timedelta(days=270):
+        return True
+    return any(row.get(c) is None for c in ("confirmed", "satisfaction"))
+
+
+# ---------------------------------------------------------------------------
+# 수집 계획
+# ---------------------------------------------------------------------------
+
+def plan_tasks(courses: dict[tuple, CourseRef], rows: dict[tuple, dict], skips: dict[tuple, str],
+               active: set[tuple], today: date, now: datetime, rescrape_days: int,
+               skip_retry_days: int = 30) -> list[tuple]:
+    """(우선순위, tracse_id, cstmr_id, session) 목록. 숫자가 작을수록 먼저."""
+    by_course: dict[tuple, dict[int, dict]] = defaultdict(dict)
+    for (tid, cst, sess), r in rows.items():
+        by_course[(tid, cst)][sess] = r
+
+    tasks = []
+    for ck, ref in courses.items():
+        known = by_course.get(ck, {})
+        top = max([ref.tracse_tme, *known.keys()] or [1])
+        for s in range(1, top + 1):
+            k = (*ck, s)
+            if s in known:
+                r = known[s]
+                if is_live(r, today) and days_since(r.get("web_scraped_at"), now) >= rescrape_days:
+                    tasks.append((0 if ck in active else 1, *k))
+            elif days_since(skips.get(k), now) >= skip_retry_days:
+                # 아직 없는 회차: 최근 회차부터
+                tasks.append((2, *k))
+        # 진행 중인 과정은 다음 회차가 생겼는지 확인
+        if ck in active:
+            k = (*ck, top + 1)
+            if days_since(skips.get(k), now) >= 1:
+                tasks.append((0, *k))
+    tasks.sort(key=lambda t: (t[0], -t[3]))
+    return tasks
+
+
 # ---------------------------------------------------------------------------
 # 실행
 # ---------------------------------------------------------------------------
 
 def parse_args(argv=None):
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("--full", action="store_true", help="KDT 시작(2020-12)부터 전체 수집")
-    p.add_argument("--since", help="개강일 시작 (YYYY-MM-DD)")
-    p.add_argument("--until", help="개강일 끝 (YYYY-MM-DD)")
-    p.add_argument("--days-back", type=int, default=450, help="평소 실행 시 오늘 기준 과거 일수")
-    p.add_argument("--days-ahead", type=int, default=180, help="평소 실행 시 오늘 기준 미래 일수")
-    p.add_argument("--max-api-calls", type=int, default=int(os.getenv("MAX_API_CALLS", "4000")))
-    p.add_argument("--max-scrape", type=int, default=int(os.getenv("MAX_SCRAPE", "400")),
+    p.add_argument("--max-pages", type=int, default=int(os.getenv("MAX_PAGES", "1500")),
                    help="한 번 실행에 여는 상세 페이지 최대 수")
-    p.add_argument("--scrape-delay", type=float, default=1.5)
-    p.add_argument("--rescrape-days", type=int, default=14, help="같은 회차를 다시 크롤링하기까지 일수")
-    p.add_argument("--skip-schedule", action="store_true", help="훈련일정 API(310L03) 호출 안 함")
-    p.add_argument("--skip-info", action="store_true", help="과정정보 API(310L02) 호출 안 함")
-    p.add_argument("--skip-scrape", action="store_true", help="상세 페이지 크롤링 안 함")
+    p.add_argument("--max-list-pages", type=int, default=300, help="목록 페이지 최대 수")
+    p.add_argument("--delay", type=float, default=float(os.getenv("CRAWL_DELAY", "1.2")),
+                   help="상세 페이지 사이 대기(초)")
+    p.add_argument("--rescrape-days", type=int, default=7, help="같은 회차를 다시 읽기까지 일수")
+    p.add_argument("--skip-list", action="store_true", help="목록 크롤링 생략 (DB에 있는 과정만 갱신)")
+    p.add_argument("--list-url", help="목록 페이지 주소 (기본: KDT 목록)")
+    p.add_argument("--save-every", type=int, default=200, help="상세 페이지 N개마다 중간 저장")
     p.add_argument("--dry-run", action="store_true", help="DB에 쓰지 않음")
-    p.add_argument("--inspect", metavar="DIR", help="API 원본 응답과 상세 페이지 샘플을 DIR에 저장")
+    p.add_argument("--inspect", metavar="DIR", help="목록·상세 페이지 원본 샘플을 DIR에 저장")
     p.add_argument("--csv", metavar="PATH", help="결과를 CSV로도 저장")
+    p.add_argument("--headful", action="store_true", help="브라우저 창을 띄워서 실행 (로컬 디버깅용)")
     return p.parse_args(argv)
 
 
@@ -165,187 +176,162 @@ def run(args) -> int:
     today = datetime.now(KST).date()
     now = datetime.now(timezone.utc)
     now_iso = now.isoformat()
+    stats: dict[str, int] = defaultdict(int)
 
-    if args.full:
-        start, end = KDT_START, today + timedelta(days=args.days_ahead)
-    else:
-        start = today - timedelta(days=args.days_back)
-        end = today + timedelta(days=args.days_ahead)
-    if args.since:
-        start = date.fromisoformat(args.since)
-    if args.until:
-        end = date.fromisoformat(args.until)
-    log.info("개강일 범위: %s ~ %s", start, end)
-
-    api = Work24Api(os.environ.get("WORK24_API_KEY", ""), max_calls=args.max_api_calls,
-                    inspect_dir=args.inspect)
     db = SupabaseDB(os.environ.get("SUPABASE_URL", ""),
                     os.environ.get("SUPABASE_SERVICE_ROLE_KEY", ""), dry_run=args.dry_run)
 
-    # 1) 목록 API: 회차 단위 기본 데이터 ------------------------------------
-    rows: dict[tuple, dict] = {}
-    for item in api.list_sessions(start, end, KDT_CODE):
-        rec = from_api(item)
-        if not all(rec.get(k) for k in ("tracse_id", "trainst_cstmr_id", "session")):
-            continue
-        rec["api_synced_at"] = now_iso
-        rows[key_of(rec)] = merge(rows.get(key_of(rec), {}), rec)
-    log.info("목록 API: %d개 회차, %d개 과정", len(rows), len({(k[0], k[1]) for k in rows}))
-    if not rows:
-        log.error("목록 API 결과가 0건입니다. 인증키와 파라미터를 확인하세요 (--inspect로 원본 확인).")
+    # 1) 목록 페이지 ---------------------------------------------------------
+    listed: dict[tuple, CourseRef] = {}
+    if not args.skip_list:
+        lc = ListCrawler(url=args.list_url or LIST_URL,
+                         max_pages=args.max_list_pages, headless=not args.headful,
+                         dump_dir=os.path.join(args.inspect, "list") if args.inspect else None)
+        try:
+            listed = lc.crawl()
+        except Exception:
+            log.exception("목록 크롤링 실패 — DB에 있는 과정만 갱신합니다")
+    stats["listed"] = len(listed)
+    log.info("목록에서 찾은 과정: %d", len(listed))
+
+    # 2) DB의 기존 과정과 합치기 ---------------------------------------------
+    rows: dict[tuple, dict] = {k: {c: v.get(c) for c in COLUMNS} for k, v in db.existing_all().items()}
+    skips = db.skips_all()
+    courses: dict[tuple, CourseRef] = {}
+    for (tid, cst, sess), r in rows.items():
+        ref = courses.setdefault((tid, cst), CourseRef(tid, cst, 1, r.get("crse_tracse_se") or KDT_CODE))
+        ref.tracse_tme = max(ref.tracse_tme, sess)
+        ref.title = ref.title or (r.get("course_name") or "")
+        ref.institution = ref.institution or (r.get("institution") or "")
+    for ck, ref in listed.items():
+        if ck in courses:
+            cur = courses[ck]
+            cur.tracse_tme = max(cur.tracse_tme, ref.tracse_tme)
+            cur.title = ref.title or cur.title
+            cur.institution = ref.institution or cur.institution
+            cur.crse_tracse_se = ref.crse_tracse_se or cur.crse_tracse_se
+        else:
+            courses[ck] = ref
+    if not courses:
+        log.error("수집할 과정이 없습니다. 목록 크롤링 결과를 확인하세요 (--inspect).")
+        report([], stats, args)
         return 2
+    active = set(listed)
+    log.info("전체 과정 %d (목록 %d, DB %d행)", len(courses), len(active), len(rows))
 
-    # 2) 기존 DB 값과 합치기 ------------------------------------------------
-    existing = db.existing_for_courses(k[0] for k in rows)
-    log.info("DB 기존 행: %d", len(existing))
-    for k, ex in existing.items():
-        base = {c: ex.get(c) for c in COLUMNS}
-        rows[k] = merge(base, rows.get(k, {}))
+    # 3) 상세 페이지 ---------------------------------------------------------
+    tasks = plan_tasks(courses, rows, skips, active, today, now, args.rescrape_days)
+    log.info("상세 페이지 대상 %d개 (이번 실행 최대 %d)", len(tasks), args.max_pages)
+    scraper = DetailScraper(delay=args.delay, max_pages=args.max_pages,
+                            dump_dir=os.path.join(args.inspect, "detail") if args.inspect else None)
 
-    courses: dict[tuple, list[tuple]] = defaultdict(list)
-    for k in rows:
-        courses[(k[0], k[1])].append(k)
-
-    # 3) 과정정보 API(310L02): 훈련시간·NCS --------------------------------
-    stats = defaultdict(int)
-    if not args.skip_info:
-        for (tid, cst), keys in courses.items():
-            if all(rows[k].get("training_hours") and rows[k].get("ncs_job") for k in keys):
-                continue
-            latest = max(keys, key=lambda k: k[2])
-            try:
-                info = api.course_info(tid, latest[2], cst)
-            except ApiError as e:
-                log.warning("과정정보 API 중단: %s", e)
-                break
-            rec = from_api(info) if info else {}
-            course_vals = {c: rec[c] for c in COURSE_LEVEL if rec.get(c)}
-            if course_vals:
-                stats["info_ok"] += 1
-                for k in keys:
-                    # 훈련비는 회차마다 다를 수 있으니 비어 있을 때만 채운다
-                    vals = dict(course_vals)
-                    if rows[k].get("training_fee"):
-                        vals.pop("training_fee", None)
-                    rows[k] = merge(rows[k], vals)
-
-    # 4) 훈련일정 API(310L03): 수강·수료 인원, 취업률 -----------------------
-    if not args.skip_schedule:
-        for (tid, cst), keys in courses.items():
-            # 끝난 지 9개월 넘고 값이 다 찬 과정은 건너뜀 (실적이 더 안 바뀜)
-            def settled(k):
-                r = rows[k]
-                ed = r.get("end_date")
-                old = ed and date.fromisoformat(ed) < today - timedelta(days=270)
-                return old and r.get("confirmed") is not None and r.get("employment_rate_6m") is not None
-            if all(settled(k) for k in keys):
-                continue
-            try:
-                sched = api.schedule(tid, cst)
-            except ApiError as e:
-                log.warning("훈련일정 API 중단: %s", e)
-                break
-            template = rows[max(keys, key=lambda k: k[2])]
-            for item in sched:
-                rec = from_api(item)
-                sess = rec.get("session")
-                if not sess:
-                    continue
-                rec.update(tracse_id=tid, trainst_cstmr_id=cst, session=sess)
-                k = key_of(rec)
-                if k not in rows:
-                    # 목록 범위 밖의 옛 회차: 과정 공통값을 물려받아 새로 추가
-                    base = {c: template.get(c) for c in ("institution", "course_name", *COURSE_LEVEL)}
-                    rows[k] = base
-                    courses[(tid, cst)].append(k)
-                    stats["schedule_new_sessions"] += 1
-                rec["api_synced_at"] = now_iso
-                rows[k] = merge(rows[k], rec)
-            stats["schedule_ok"] += 1
-
-    # 5) 상세 페이지 크롤링: API에 없는 값만 -------------------------------
-    if not args.skip_scrape:
-        scraper = DetailScraper(delay=args.scrape_delay, max_pages=args.max_scrape,
-                                dump_dir=os.path.join(args.inspect, "detail") if args.inspect else None)
-        todo = []
-        for (tid, cst), keys in courses.items():
-            course_missing = not all(rows[k].get(c) for k in keys for c in ("ncs_level", "training_hours", "ncs_job"))
-            for k in keys:
-                r = rows[k]
-                started = r.get("start_date") and r["start_date"] <= today.isoformat()
-                sess_missing = started and any(r.get(c) is None for c in SESSION_SCRAPE_FIELDS)
-                if (course_missing or sess_missing) and days_ago(r.get("web_scraped_at"), now) >= args.rescrape_days:
-                    todo.append(k)
-        # 최근 개강 회차부터
-        todo.sort(key=lambda k: rows[k].get("start_date") or "", reverse=True)
-        log.info("상세 페이지 크롤링 대상 %d개 (이번 실행 최대 %d)", len(todo), args.max_scrape)
-
-        course_done: set[tuple] = set()
-        for k in todo:
-            if scraper.exhausted:
-                break
-            tid, cst, sess = k
-            r = rows[k]
-            sess_missing = any(r.get(c) is None for c in SESSION_SCRAPE_FIELDS)
-            if not sess_missing and (tid, cst) in course_done:
-                continue
-            got = scraper.fetch(tid, sess, KDT_CODE, cst)
-            r["web_scraped_at"] = now_iso
-            if not got:
-                stats["scrape_fail"] += 1
-                continue
-            stats["scrape_ok"] += 1
-            # 회차 단위 값
-            sess_vals = {c: got[c] for c in ("evaluators", "confirmed", "completed", "completion_rate", "capacity")
-                         if c in got and r.get(c) is None}
-            if r.get("satisfaction") is None and "satisfaction" in got:
-                sess_vals["satisfaction"] = got["satisfaction"]
-            rows[k] = merge(r, sess_vals)
-            # 과정 단위 값은 같은 과정의 모든 회차에 (비어 있는 칸만)
-            course_vals = {c: got[c] for c in ("ncs_level", "ncs_job", "ncs_code", "training_hours", "training_days")
-                           if c in got}
-            if course_vals:
-                course_done.add((tid, cst))
-                for kk in courses[(tid, cst)]:
-                    rows[kk] = merge(rows[kk], {c: v for c, v in course_vals.items() if rows[kk].get(c) is None})
-
-    # 6) 계산값 + 저장 ------------------------------------------------------
-    out = []
-    for r in rows.values():
-        if not r.get("institution") or not r.get("course_name"):
-            stats["skipped_no_name"] += 1
+    sessions_of: dict[tuple, set] = defaultdict(set)
+    for (tid, cst, sess) in rows:
+        sessions_of[(tid, cst)].add(sess)
+    dirty: set[tuple] = set()
+    new_skips: list[tuple] = []
+    queued = {t[1:] for t in tasks}
+    i = 0
+    while i < len(tasks) and not scraper.exhausted:
+        _, tid, cst, sess = tasks[i]
+        i += 1
+        ck, k = (tid, cst), (tid, cst, sess)
+        ref = courses[ck]
+        got = scraper.fetch(tid, sess, ref.crse_tracse_se or KDT_CODE, cst)
+        if not got:
+            stats["detail_missing"] += 1
+            new_skips.append(k)
             continue
-        r["source"] = r.get("source") or "api"
-        fill_derived(r)
-        out.append(r)
+        stats["detail_ok"] += 1
 
-    n = db.upsert(out)
+        row = rows.get(k)
+        if row is None:
+            # 새 회차: 같은 과정의 다른 회차에서 과정 공통값을 물려받는다
+            row = {"tracse_id": tid, "trainst_cstmr_id": cst, "session": sess}
+            for s2 in sessions_of[ck]:
+                sib = rows[(tid, cst, s2)]
+                row = merge(row, {c: sib.get(c) for c in COURSE_LEVEL if row.get(c) is None})
+        row["crse_tracse_se"] = ref.crse_tracse_se or KDT_CODE
+        row["institution"] = row.get("institution") or ref.institution or got.get("institution")
+        row["course_name"] = ref.title or row.get("course_name") or got.get("course_name")
+        row = merge(row, {c: got.get(c) for c in SESSION_FIELDS})
+        row["web_scraped_at"] = now_iso
+        rows[k] = row
+        dirty.add(k)
+
+        # 과정 공통값은 이 회차에 넣고, 같은 과정의 다른 회차는 빈 칸만 채움
+        course_vals = {c: got[c] for c in COURSE_LEVEL if got.get(c) is not None}
+        rows[k] = merge(rows[k], course_vals)
+        sessions_of[ck].add(sess)
+        for s2 in sessions_of[ck]:
+            kk = (tid, cst, s2)
+            rr = rows[kk]
+            fill = {c: v for c, v in course_vals.items() if rr.get(c) is None}
+            if fill:
+                rows[kk] = merge(rr, fill)
+                dirty.add(kk)
+
+        # 상세 페이지가 알려준 총 회차가 더 크면 빠진 회차를 대기열에 추가
+        top = got.get("max_session") or 0
+        for s in range(1, top + 1):
+            nk = (tid, cst, s)
+            if nk not in rows and nk not in queued:
+                queued.add(nk)
+                tasks.append((3, tid, cst, s))
+
+        if len(dirty) >= args.save_every:
+            save(db, rows, dirty, stats)
+            db.upsert_skips(new_skips, now_iso)
+            new_skips.clear()
+
+    if scraper.exhausted and i < len(tasks):
+        log.info("이번 실행 한도 도달: 남은 %d개는 다음 실행에서", len(tasks) - i)
+    stats["remaining"] = max(0, len(tasks) - i)
+
+    save(db, rows, dirty, stats)
+    db.upsert_skips(new_skips, now_iso)
     merged = db.merge_legacy_rows()
-    log.info("저장 %d행, 시트 이전 행과 병합 %s행", n, merged)
+    log.info("시트 이전 행과 병합 %s행", merged)
 
+    out = [r for r in rows.values() if r.get("institution") and r.get("course_name")]
     if args.csv:
         os.makedirs(os.path.dirname(os.path.abspath(args.csv)), exist_ok=True)
         with open(args.csv, "w", encoding="utf-8-sig", newline="") as f:
             w = csv.DictWriter(f, fieldnames=COLUMNS, extrasaction="ignore")
             w.writeheader()
             w.writerows(sorted(out, key=lambda r: (r.get("start_date") or ""), reverse=True))
-
-    report(out, stats, api.calls, start, end, args)
+    report(out, stats, args, pages=scraper.pages)
     return 0
 
 
-def report(rows: list[dict], stats: dict, api_calls: int, start, end, args) -> None:
+def save(db: SupabaseDB, rows: dict, dirty: set, stats: dict) -> None:
+    batch = []
+    for k in list(dirty):
+        r = rows[k]
+        if not r.get("institution") or not r.get("course_name"):
+            stats["skipped_no_name"] += 1
+            continue
+        r["source"] = r.get("source") or "crawler"
+        fill_derived(r)
+        batch.append(r)
+    n = db.upsert(batch)
+    stats["saved"] += n
+    dirty.clear()
+    log.info("중간 저장 %d행 (누적 %d)", n, stats["saved"])
+
+
+def report(rows: list[dict], stats: dict, args, pages: int = 0) -> None:
     total = len(rows) or 1
     cover = {c: sum(1 for r in rows if r.get(c) not in (None, "")) for c in
              ("training_fee", "training_hours", "ncs_job", "ncs_level", "capacity", "applicants",
               "confirmed", "completed", "satisfaction", "evaluators", "employment_rate_6m")}
     lines = [
-        f"## KDT 수집 결과 ({datetime.now(KST):%Y-%m-%d %H:%M} KST)",
-        f"- 개강일 범위: {start} ~ {end}{' (dry-run)' if args.dry_run else ''}",
-        f"- 저장 회차: {len(rows)} / API 호출: {api_calls}",
-        f"- 과정정보 API 성공: {stats['info_ok']} / 훈련일정 API 성공: {stats['schedule_ok']} "
-        f"(새 회차 {stats['schedule_new_sessions']})",
-        f"- 상세 페이지: 성공 {stats['scrape_ok']} / 실패 {stats['scrape_fail']}",
+        f"## KDT 수집 결과 ({datetime.now(KST):%Y-%m-%d %H:%M} KST){' — dry-run' if args.dry_run else ''}",
+        f"- 목록에서 찾은 과정: {stats['listed']}",
+        f"- 상세 페이지: {pages}개 열람, 성공 {stats['detail_ok']}, 회차 없음 {stats['detail_missing']}, "
+        f"다음 실행으로 넘김 {stats['remaining']}",
+        f"- 저장: {stats['saved']}행 (이름 없어 건너뜀 {stats['skipped_no_name']})",
+        f"- DB 전체 회차(이번 실행 기준): {len(rows)}",
         "",
         "| 항목 | 채워진 비율 |",
         "|---|---|",

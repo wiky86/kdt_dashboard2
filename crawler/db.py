@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Iterable, Iterator, Optional
+from typing import Iterator, Optional
 
 import requests
 
@@ -14,11 +14,11 @@ CONFLICT_COLS = "tracse_id,trainst_cstmr_id,session"
 
 # 수집기가 쓰는 컬럼 (id, created_at 등 DB가 관리하는 컬럼 제외)
 COLUMNS = [
-    "tracse_id", "trainst_cstmr_id", "session", "institution", "course_name",
+    "tracse_id", "trainst_cstmr_id", "crse_tracse_se", "session", "institution", "course_name",
     "training_fee", "ncs_code", "ncs_job", "ncs_level", "training_days", "training_hours",
     "hourly_fee", "start_date", "end_date", "capacity", "applicants", "confirmed",
     "completed", "satisfaction", "evaluators", "recruitment_rate", "completion_rate",
-    "employment_rate_3m", "employment_rate_6m", "source", "api_synced_at", "web_scraped_at",
+    "employment_rate_3m", "employment_rate_6m", "source", "web_scraped_at",
 ]
 
 
@@ -57,23 +57,36 @@ class SupabaseDB:
                 break
             start += page_size
 
-    def existing_since(self, start_date: str) -> dict[tuple, dict]:
-        """개강일이 start_date 이후인 수집 행을 (tracse_id, trainst_cstmr_id, session) 키로."""
+    def existing_all(self) -> dict[tuple, dict]:
+        """수집기가 저장한 모든 행을 (tracse_id, trainst_cstmr_id, session) 키로."""
         out = {}
-        q = f"select=*&tracse_id=not.is.null&start_date=gte.{start_date}"
-        for row in self.select_all(q):
+        for row in self.select_all("select=*&tracse_id=not.is.null&order=id.asc"):
             out[(row["tracse_id"], row["trainst_cstmr_id"], int(row["session"]))] = row
         return out
 
-    def existing_for_courses(self, tracse_ids: Iterable[str]) -> dict[tuple, dict]:
-        """특정 과정들의 기존 행 (개강일 범위 밖의 옛 회차 포함)."""
+    def skips_all(self) -> dict[tuple, str]:
+        """상세 페이지가 없던 회차 → 마지막 확인 시각."""
         out = {}
-        ids = sorted(set(tracse_ids))
-        for i in range(0, len(ids), 100):
-            chunk = ",".join(f'"{x}"' for x in ids[i:i + 100])
-            for row in self.select_all(f"select=*&tracse_id=in.({chunk})"):
-                out[(row["tracse_id"], row["trainst_cstmr_id"], int(row["session"]))] = row
-        return out
+        start = 0
+        while True:
+            r = self.s.get(f"{self.base}/crawl_skips?select=*",
+                           headers={"Range-Unit": "items", "Range": f"{start}-{start + 999}"}, timeout=60)
+            self._check(r)
+            rows = r.json()
+            for row in rows:
+                out[(row["tracse_id"], row["trainst_cstmr_id"], int(row["session"]))] = row["checked_at"]
+            if len(rows) < 1000:
+                return out
+            start += 1000
+
+    def upsert_skips(self, keys: list[tuple], checked_at: str) -> None:
+        if not keys or self.dry_run:
+            return
+        body = [{"tracse_id": k[0], "trainst_cstmr_id": k[1], "session": k[2], "checked_at": checked_at}
+                for k in keys]
+        r = self.s.post(f"{self.base}/crawl_skips?on_conflict=tracse_id,trainst_cstmr_id,session", json=body,
+                        headers={"Prefer": "resolution=merge-duplicates,return=minimal"}, timeout=60)
+        self._check(r)
 
     def upsert(self, rows: list[dict], batch: int = 500) -> int:
         """같은 키가 있으면 갱신, 없으면 추가. 모든 행이 같은 컬럼을 갖도록 맞춘다."""

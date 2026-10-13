@@ -11,13 +11,14 @@ on:
         type: choice
         default: normal
         options:
-          - normal      # 최근 약 15개월 ~ 6개월 뒤 개강 회차
-          - full        # KDT 시작(2020-12)부터 전체 (처음 한 번)
-          - inspect     # API 원본·상세 페이지 샘플만 저장 (DB에 안 씀)
+          - normal      # 평소: 목록 확인 + 상세 페이지 최대 1,500개
+          - backfill    # 처음: 상세 페이지 최대 8,000개 (과거 회차 채우기)
+          - inspect     # 시험: 페이지 원본 샘플만 저장 (DB에 안 씀)
           - migrate     # 구글 시트(시트4) 기존 데이터를 Supabase로 1회 이전
-      max_scrape:
-        description: "상세 페이지 최대 크롤링 수"
-        default: "400"
+      max_pages:
+        description: "상세 페이지 최대 수 (비우면 실행 방식 기본값)"
+        required: false
+        default: ""
 
 concurrency:
   group: kdt-collect
@@ -29,12 +30,10 @@ permissions:
 jobs:
   collect:
     runs-on: ubuntu-latest
-    timeout-minutes: 180
+    timeout-minutes: 340
     env:
-      WORK24_API_KEY: ${{ secrets.WORK24_API_KEY }}
       SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
       SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
-      MAX_SCRAPE: ${{ github.event.inputs.max_scrape || '400' }}
       PYTHONUNBUFFERED: "1"
     steps:
       - uses: actions/checkout@v4
@@ -46,16 +45,15 @@ jobs:
           cache-dependency-path: crawler/requirements.txt
 
       - name: 패키지 설치
-        run: pip install -r crawler/requirements.txt
+        run: |
+          pip install -r crawler/requirements.txt
+          python -m playwright install --with-deps chromium
 
       - name: 시크릿 확인
         run: |
           missing=""
           [ -z "$SUPABASE_URL" ] && missing="$missing SUPABASE_URL"
           [ -z "$SUPABASE_SERVICE_ROLE_KEY" ] && missing="$missing SUPABASE_SERVICE_ROLE_KEY"
-          if [ "${{ github.event.inputs.mode }}" != "migrate" ] && [ -z "$WORK24_API_KEY" ]; then
-            missing="$missing WORK24_API_KEY"
-          fi
           if [ -n "$missing" ]; then
             echo "::error::저장소 Settings > Secrets and variables > Actions 에 다음 시크릿을 추가하세요:$missing"
             exit 1
@@ -64,12 +62,13 @@ jobs:
       - name: 수집 실행
         run: |
           mode="${{ github.event.inputs.mode || 'normal' }}"
+          pages="${{ github.event.inputs.max_pages }}"
           mkdir -p out
           case "$mode" in
-            full)    python -m crawler.main --full --max-api-calls 20000 --csv out/sessions.csv ;;
-            inspect) python -m crawler.main --inspect out/inspect --dry-run --max-scrape 5 --since "$(date -d '-60 days' +%F)" --until "$(date +%F)" --csv out/sessions.csv ;;
-            migrate) python -m crawler.migrate_sheet ;;
-            *)       python -m crawler.main --csv out/sessions.csv ;;
+            backfill) python -m crawler.main --max-pages "${pages:-8000}" --csv out/sessions.csv ;;
+            inspect)  python -m crawler.main --inspect out/inspect --dry-run --max-pages "${pages:-10}" --max-list-pages 2 --csv out/sessions.csv ;;
+            migrate)  python -m crawler.migrate_sheet ;;
+            *)        python -m crawler.main --max-pages "${pages:-1500}" --csv out/sessions.csv ;;
           esac
 
       - name: 결과 파일 보관
