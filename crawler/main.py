@@ -160,7 +160,7 @@ def plan_tasks(courses: dict[tuple, CourseRef], rows: dict[tuple, dict], skips: 
 
 def parse_args(argv=None):
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("--max-pages", type=int, default=int(os.getenv("MAX_PAGES", "1500")),
+    p.add_argument("--max-pages", type=int, default=int(os.getenv("MAX_PAGES", "4000")),
                    help="한 번 실행에 여는 상세 페이지 최대 수")
     p.add_argument("--max-list-pages", type=int, default=300, help="목록 페이지 최대 수")
     p.add_argument("--delay", type=float, default=float(os.getenv("CRAWL_DELAY", "1.2")),

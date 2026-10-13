@@ -7,7 +7,7 @@
 ### 📊 데이터 검색 및 필터링
 - **기본 검색**: 기관명, 과정명으로 검색
 - **고급 필터**: NCS직무, 훈련시간, 시간당훈련비, 수료율, 취업률, 만족도, 개강일 범위
-- **자동 수집**: 고용24 KDT 과정 데이터를 평일 새벽마다 자동 수집해 Supabase에 저장
+- **자동 수집**: 고용24 KDT 과정 데이터를 매주 월요일 새벽 자동 수집해 Supabase에 저장
 
 ### 🔎 맞춤 조회 (reports.html)
 - **자주 쓰는 조회**: 미개설 회차(개강일 지남 + 수강확정 0명), 모집률 저조, 정원 마감, 신규 과정, 개강 예정, 취업률 상위, 만족도 낮음, 기관별 개설 현황
@@ -50,7 +50,7 @@
 ├── styles.css          # 공통 스타일시트
 ├── crawler/            # 고용24 데이터 수집기 (자세한 설명: crawler/README.md)
 ├── supabase/schema.sql # DB 테이블 정의
-└── .github/workflows/collect.yml  # 평일 새벽 자동 수집
+└── .github/workflows/collect.yml  # 매주 월요일 새벽 자동 수집
 ```
 
 ## 🔧 설정 정보
@@ -58,7 +58,7 @@
 ### 데이터 수집·저장
 - 수집 범위: 고용24 K-디지털 트레이닝(KDT) 전체 과정, 회차 단위
 - 저장소: Supabase `training_sessions` 테이블
-- 실행: GitHub Actions, 평일 새벽 3시 17분(KST)
+- 실행: GitHub Actions, 매주 월요일 새벽 3시 17분(KST)
 - 처음 설정 방법은 [crawler/README.md](crawler/README.md) 참고
 
 ### 데이터 구조
@@ -81,7 +81,7 @@
 
 ## 🔄 데이터 플로우
 
-1. **수집 (평일 새벽)** → 고용24 목록·상세 페이지 크롤링 → Supabase 저장
+1. **수집 (매주 월요일 새벽)** → 고용24 목록·상세 페이지 크롤링 → Supabase 저장
 2. **페이지 로드** → Supabase REST API 호출
 3. **데이터 파싱** → JavaScript 객체로 변환
 4. **UI 렌더링** → 검색 결과 및 필터 옵션 표시
