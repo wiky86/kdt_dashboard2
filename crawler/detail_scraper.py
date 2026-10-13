@@ -187,6 +187,21 @@ def parse_detail_text(text: str) -> dict:
     return out
 
 
+def notice_snippets(name: str, text: str) -> None:
+    """GitHub Actions 알림으로 주요 단어 주변 글자를 남긴다 (정규식 맞추기용)."""
+    import os
+    if not os.environ.get("GITHUB_ACTIONS"):
+        return
+    t = re.sub(r"\s+", " ", text)
+    parts = []
+    for kw in ("정원", "수강", "만족도", "평가", "수료", "취업률", "회차", "훈련비", "NCS", "수준"):
+        idx = [m.start() for m in re.finditer(kw, t)][:3]
+        for i in idx:
+            parts.append(f"[{kw}] {t[max(0, i - 25):i + 45]}")
+    msg = " | ".join(parts)[:3800].replace("::", ":")
+    print(f"::notice title=상세 페이지 {name}::{msg}")
+
+
 class DetailScraper:
     def __init__(self, delay: float = 1.2, max_pages: int = 1500, dump_dir: Optional[str] = None):
         self.delay = delay
@@ -223,6 +238,8 @@ class DetailScraper:
                 text = html_to_text(r.text)
                 if self.dump_dir and self._dumped < 5:
                     self._dump(tracse_id, session, r.text, text)
+                    if self._dumped <= 2:
+                        notice_snippets(f"{tracse_id} {session}회차", text)
                 got = parse_detail_text(text)
                 self.consecutive_errors = 0
                 # 기간·회차를 못 읽으면 없는 회차(또는 오류 페이지)로 본다

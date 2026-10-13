@@ -193,6 +193,18 @@ def find_page_link(html: str, target: int) -> Optional[tuple[str, str]]:
     return None
 
 
+def _notice(title: str, msg: str) -> None:
+    import os
+    if os.environ.get("GITHUB_ACTIONS"):
+        print(f"::notice title={title}::{msg.replace(chr(10), ' ')[:1500]}")
+
+
+def page_size_hint(html: str) -> str:
+    """'개씩' 주변 HTML을 잘라서 보여준다."""
+    i = (html or "").find("개씩")
+    return re.sub(r"\s+", " ", html[max(0, i - 700):i + 500]) if i >= 0 else "('개씩' 없음)"
+
+
 def css_escape(value: str) -> str:
     return value.replace("\\", "\\\\").replace('"', '\\"')
 
@@ -317,6 +329,7 @@ class ListCrawler:
             sel = page.locator("select").filter(has=page.locator("option", has_text=re.compile(r"100\s*개"))).first
             if not sel.count():
                 log.info("페이지 크기 선택 상자 없음")
+                _notice("페이지 크기", "100개 옵션이 있는 select 없음: " + page_size_hint(self._html(page)))
                 return
             label = next(o.strip() for o in sel.locator("option").all_inner_texts() if re.search(r"100\s*개", o))
             sel.select_option(label=label)
@@ -330,6 +343,7 @@ class ListCrawler:
             self._settle(page)
         except Exception as e:  # noqa: BLE001
             log.warning("페이지 크기 변경 실패(무시): %s", str(e)[:200])
+            _notice("페이지 크기", f"실패 {str(e)[:200]} / " + page_size_hint(self._html(page)))
 
     def _go_next(self, page, html: str, target: int) -> bool:
         """HTML에서 target 페이지 링크(없으면 '다음')를 찾아 누른다."""
