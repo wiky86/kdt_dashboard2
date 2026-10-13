@@ -97,73 +97,167 @@ def parse_card_text(text: str, title: str = "") -> dict:
     return out
 
 
-# 페이지 안에서 실행: 과정 링크 후보와 그 카드 텍스트를 모은다
-_EXTRACT_JS = r"""
-() => {
-  const out = [];
-  const idRe = /A[A-Z0-9]{2}\d{10,16}/;
-  const els = document.querySelectorAll('[onclick], a[href*="tracseId"], [data-tracse-id], [data-tracseid]');
-  for (const el of els) {
-    const attrs = [el.getAttribute('onclick') || '', el.getAttribute('href') || ''];
-    for (const a of el.attributes) { if (a.name.startsWith('data-')) attrs.push(`${a.name}='${a.value}'`); }
-    const raw = attrs.join(' ');
-    if (!idRe.test(raw) && !/tracse/i.test(raw)) continue;
-    let card = el;
-    for (let i = 0; i < 8 && card.parentElement; i++) {
-      card = card.parentElement;
-      if ((card.innerText || '').length > 80 && /회차|훈련/.test(card.innerText)) break;
-    }
-    const instEl = card.querySelector('[title*="기관"]');
-    out.push({
-      raw,
-      text: (el.innerText || el.getAttribute('title') || '').trim(),
-      title: el.getAttribute('title') || '',
-      inst: instEl ? (instEl.innerText || '').trim() : '',
-      card: (card.innerText || '').trim().slice(0, 1500),
-    });
-  }
-  return out;
-}
-"""
 
-# 페이지 안에서 실행: 다음 페이지로 이동. 'clicked:N' / 'next' / 'none' 반환
-_NEXT_PAGE_JS = r"""
-(target) => {
-  const isVisible = el => !!(el.offsetWidth || el.offsetHeight || el.getClientRects().length);
-  const all = [...document.querySelectorAll('a, button')].filter(isVisible);
-  const label = el => ((el.innerText || '') + ' ' + (el.getAttribute('title') || '')).trim();
-  const nextBtn = all.find(el => /^다음(\s|$)|다음\s*페이지/.test(label(el)));
-  let scope = nextBtn ? nextBtn.closest('nav, ul, div, .pagination, .paging') : document;
-  for (let i = 0; i < 3 && scope && scope !== document; i++) {
-    if ([...scope.querySelectorAll('a, button')].some(el => (el.innerText || '').trim() === String(target))) break;
-    scope = scope.parentElement;
-  }
-  const cands = [...(scope || document).querySelectorAll('a, button')]
-    .filter(isVisible)
-    .filter(el => (el.innerText || '').trim() === String(target));
-  if (cands.length) { cands[0].click(); return 'clicked:' + target; }
-  if (nextBtn) { nextBtn.click(); return 'next'; }
-  return 'none';
-}
-"""
+TRACSE_ID_ANY_RE = re.compile(r"A[A-Z0-9]{2}\d{10,16}")
 
-# 페이지 크기 '100개씩'으로 바꾸고 '적용'
-_PAGE_SIZE_JS = r"""
-() => {
-  for (const sel of document.querySelectorAll('select')) {
-    const opt = [...sel.options].find(o => /100\s*개/.test(o.text));
-    if (opt) {
-      sel.value = opt.value;
-      sel.dispatchEvent(new Event('change', { bubbles: true }));
-      const btn = [...document.querySelectorAll('a, button, input[type=button], input[type=submit]')]
-        .find(el => /적용/.test((el.innerText || el.value || '').trim()));
-      if (btn) { btn.click(); return 'applied'; }
-      return 'changed';
-    }
-  }
-  return 'none';
-}
-"""
+
+def _card_of(tag):
+    """링크에서 위로 올라가며 과정 카드(텍스트가 충분하고 회차/훈련이 들어간 요소)를 찾는다."""
+    card = tag
+    for _ in range(8):
+        if card.parent is None:
+            break
+        card = card.parent
+        text = card.get_text("\n", strip=True)
+        if len(text) > 80 and re.search(r"회차|훈련", text):
+            break
+    return card
+
+
+def parse_list_html(html: str) -> list[CourseRef]:
+    """목록 페이지 HTML → CourseRef 목록 (페이지 안 스크립트 없이 파이썬에서 분석)."""
+    from bs4 import BeautifulSoup
+
+    soup = BeautifulSoup(html or "", "html.parser")
+    refs: dict[tuple, CourseRef] = {}
+    for tag in soup.find_all(True):
+        raw = " ".join(f"{k}='{v}'" if k.startswith("data-") else str(v)
+                       for k, v in tag.attrs.items()
+                       if k in ("onclick", "href") or k.startswith("data-"))
+        if not raw or not (TRACSE_ID_ANY_RE.search(raw) or "tracse" in raw.lower()):
+            continue
+        ref = parse_course_ref(raw)
+        if not ref:
+            continue
+        title_attr = tag.get("title") or ""
+        text = tag.get_text(" ", strip=True)
+        title = re.sub(r"\s*훈련과정 정보.*$", "", title_attr).strip()
+        ref.title = title or (text if 3 < len(text) < 150 else "")
+        card = _card_of(tag)
+        inst_el = card.find(attrs={"title": re.compile("기관")})
+        if inst_el is not None:
+            inst = inst_el.get_text(" ", strip=True)
+            if 0 < len(inst) < 80:
+                ref.institution = inst
+        ref.card_text = card.get_text("\n", strip=True)[:1500]
+        info = parse_card_text(ref.card_text, ref.title)
+        if not ref.institution and info.get("institution"):
+            ref.institution = info["institution"]
+        if info.get("session"):
+            ref.tracse_tme = max(ref.tracse_tme, info["session"])
+        if ref.key in refs:
+            cur = refs[ref.key]
+            cur.title = cur.title or ref.title
+            cur.institution = cur.institution or ref.institution
+            cur.tracse_tme = max(cur.tracse_tme, ref.tracse_tme)
+        else:
+            refs[ref.key] = ref
+    return list(refs.values())
+
+
+def find_page_link(html: str, target: int) -> Optional[tuple[str, str]]:
+    """페이지 번호 target 링크(없으면 '다음' 버튼)를 찾아 ('onclick'|'href'|'text', 값)으로 돌려준다."""
+    from bs4 import BeautifulSoup
+
+    soup = BeautifulSoup(html or "", "html.parser")
+    clickable = soup.find_all(["a", "button"])
+    label = lambda el: (el.get_text(" ", strip=True) + " " + (el.get("title") or "")).strip()  # noqa: E731
+    next_btn = next((el for el in clickable if re.match(r"^다음(\s|$)|.*다음\s*페이지", label(el))), None)
+
+    scope = soup
+    if next_btn is not None:
+        scope = next_btn.parent or soup
+        for _ in range(3):
+            if any(el.get_text(strip=True) == str(target) for el in scope.find_all(["a", "button"])):
+                break
+            scope = scope.parent or scope
+
+    def describe(el):
+        if el.get("onclick"):
+            return ("onclick", el["onclick"])
+        href = el.get("href") or ""
+        if href and not href.startswith("javascript:void") and href != "#":
+            return ("href", href)
+        return ("text", el.get_text(strip=True))
+
+    for el in scope.find_all(["a", "button"]):
+        if el.get_text(strip=True) == str(target):
+            return describe(el)
+    if next_btn is not None:
+        # 마지막 페이지에서는 '다음'이 숨겨지거나 비활성화된다
+        cls = " ".join(next_btn.get("class") or [])
+        style = (next_btn.get("style") or "").replace(" ", "")
+        if "disabled" in cls or next_btn.has_attr("disabled") or "display:none" in style:
+            return None
+        return describe(next_btn)
+    return None
+
+
+def find_page_size_control(html: str) -> Optional[tuple[str, str, str]]:
+    """'100개' 옵션이 있는 select의 id, 그 option 값, 근처 '적용' 버튼 id."""
+    from bs4 import BeautifulSoup
+
+    soup = BeautifulSoup(html or "", "html.parser")
+    for sel in soup.find_all("select"):
+        opt = next((o for o in sel.find_all("option") if re.search(r"100\s*개", o.get_text())), None)
+        if not opt or not sel.get("id"):
+            continue
+        btn_id = ""
+        scope = sel
+        for _ in range(4):
+            scope = scope.parent
+            if scope is None:
+                break
+            btn = next((b for b in scope.find_all(["button", "a", "input"])
+                        if re.search(r"적용", b.get_text() or b.get("value", ""))), None)
+            if btn is not None:
+                btn_id = btn.get("id", "")
+                break
+        return sel["id"], opt.get("value", "100"), btn_id
+    return None
+
+
+def _notice(title: str, msg: str) -> None:
+    import os
+    if os.environ.get("GITHUB_ACTIONS"):
+        print(f"::notice title={title}::{msg.replace(chr(10), ' ')[:1500]}")
+
+
+def page_size_hint(html: str) -> str:
+    """'개씩' 주변 HTML을 잘라서 보여준다."""
+    i = (html or "").find("개씩")
+    return re.sub(r"\s+", " ", html[max(0, i - 700):i + 500]) if i >= 0 else "('개씩' 없음)"
+
+
+def css_escape(value: str) -> str:
+    return value.replace("\\", "\\\\").replace('"', '\\"')
+
+
+def safe_title(page) -> str:
+    try:
+        return page.title()
+    except Exception:  # noqa: BLE001
+        return ""
+
+
+def log_diagnostics(url: str, title: str, html: str) -> None:
+    """목록을 못 읽을 때 원인을 찾을 수 있도록 핵심 정보를 로그에 남긴다."""
+    onclicks = re.findall(r'onclick\s*=\s*"([^"]{0,160})"', html or "")
+    with_id = [o for o in onclicks if TRACSE_ID_ANY_RE.search(o)]
+    funcs = sorted({m.group(1) for o in onclicks for m in [re.match(r"\s*(?:javascript:)?\s*([\w.$]+)\s*\(", o)] if m})
+    log.info("[진단] 주소: %s", url)
+    log.info("[진단] 제목: %s / HTML %d자 / onclick %d개 (과정ID 포함 %d개)",
+             title, len(html or ""), len(onclicks), len(with_id))
+    log.info("[진단] onclick 함수 이름: %s", ", ".join(funcs[:30]))
+    for o in (with_id or onclicks)[:5]:
+        log.info("[진단] onclick 예시: %s", o)
+    ids = TRACSE_ID_ANY_RE.findall(html or "")
+    log.info("[진단] HTML 안 과정ID 후보 %d개, 예: %s", len(ids), ", ".join(ids[:3]))
+    import os
+    if os.environ.get("GITHUB_ACTIONS"):
+        sample = (with_id or onclicks or [""])[0].replace("\n", " ")[:140]
+        print(f"::notice title=목록 페이지 진단::제목 {title} / HTML {len(html or '')}자 / onclick {len(onclicks)}개"
+              f"(과정ID {len(with_id)}) / 함수 {', '.join(funcs[:8])} / 예시 {sample}")
 
 
 class ListCrawler:
@@ -176,7 +270,7 @@ class ListCrawler:
         self.click_fallback = click_fallback
 
     def crawl(self) -> dict[tuple, CourseRef]:
-        from playwright.sync_api import sync_playwright, TimeoutError as PwTimeout
+        from playwright.sync_api import sync_playwright
 
         found: dict[tuple, CourseRef] = {}
         with sync_playwright() as pw:
@@ -186,23 +280,21 @@ class ListCrawler:
             page.set_default_timeout(45000)
             page.goto(self.url, wait_until="domcontentloaded")
             self._settle(page)
-
-            try:
-                res = page.evaluate(_PAGE_SIZE_JS)
-                log.info("페이지 크기 변경: %s", res)
-                if res != "none":
-                    self._settle(page)
-            except Exception as e:  # noqa: BLE001
-                log.warning("페이지 크기 변경 실패(무시): %s", e)
+            self._set_page_size(page)
 
             prev_sig = None
             for page_no in range(1, self.max_pages + 1):
+                html = self._wait_for_courses(page)
                 if self.dump_dir and page_no <= 2:
                     self._dump(page, f"list_page{page_no}")
-                refs = self._extract(page, ctx)
+                if page_no == 1:
+                    log_diagnostics(page.url, safe_title(page), html)
+                refs = self._extract(page, ctx, html)
                 sig = tuple(sorted(r.key for r in refs))
                 if not refs:
                     log.warning("%d페이지에서 과정을 못 찾음 — 중단", page_no)
+                    if page_no > 1:
+                        log_diagnostics(page.url, safe_title(page), html)
                     break
                 if sig == prev_sig:
                     log.info("%d페이지가 이전과 같음 — 마지막 페이지로 판단", page_no)
@@ -218,12 +310,7 @@ class ListCrawler:
                 log.info("목록 %d페이지: %d개 (신규 %d, 누적 %d)", page_no, len(refs), new, len(found))
                 prev_sig = sig
 
-                try:
-                    moved = page.evaluate(_NEXT_PAGE_JS, page_no + 1)
-                except Exception as e:  # noqa: BLE001
-                    log.warning("페이지 이동 실패: %s", e)
-                    break
-                if moved == "none":
+                if not self._go_next(page, html, page_no + 1):
                     log.info("다음 페이지 없음")
                     break
                 self._settle(page)
@@ -233,43 +320,88 @@ class ListCrawler:
     # ------------------------------------------------------------------
     def _settle(self, page) -> None:
         from playwright.sync_api import TimeoutError as PwTimeout
-        try:
-            page.wait_for_load_state("networkidle", timeout=20000)
-        except PwTimeout:
-            pass
+        for state in ("load", "networkidle"):
+            try:
+                page.wait_for_load_state(state, timeout=20000)
+            except PwTimeout:
+                pass
         page.wait_for_timeout(800)
 
-    def _extract(self, page, ctx) -> list[CourseRef]:
-        items = page.evaluate(_EXTRACT_JS)
-        refs: dict[tuple, CourseRef] = {}
-        for it in items:
-            ref = parse_course_ref(it["raw"])
-            if not ref:
-                continue
-            title = re.sub(r"\s*훈련과정 정보.*$", "", it.get("title") or "").strip()
-            if title and not ref.title:
-                ref.title = title
-            elif it.get("text") and len(it["text"]) > 3 and not ref.title:
-                ref.title = it["text"]
-            inst = (it.get("inst") or "").strip()
-            if inst and len(inst) < 80:
-                ref.institution = inst
-            ref.card_text = it.get("card", "")
-            card = parse_card_text(ref.card_text, ref.title)
-            if not ref.institution and card.get("institution"):
-                ref.institution = card["institution"]
-            sess = card.get("session")
-            if sess:
-                ref.tracse_tme = max(ref.tracse_tme, sess)
-            if ref.key in refs:
-                cur = refs[ref.key]
-                cur.title = cur.title or ref.title
-                cur.institution = cur.institution or ref.institution
-                cur.tracse_tme = max(cur.tracse_tme, ref.tracse_tme)
-            else:
-                refs[ref.key] = ref
+    def _html(self, page) -> str:
+        """페이지 HTML. 이동 중이라 실패하면 잠시 후 다시 시도."""
+        for _ in range(5):
+            try:
+                return page.content()
+            except Exception as e:  # noqa: BLE001 - 페이지 이동 중
+                log.info("HTML 읽기 재시도: %s", str(e)[:120])
+                page.wait_for_timeout(1500)
+        return ""
+
+    def _wait_for_courses(self, page, timeout_s: int = 15) -> str:
+        """과정 식별자가 HTML에 나타날 때까지 기다린다 (화면이 늦게 그려지는 경우)."""
+        html = ""
+        for _ in range(timeout_s):
+            html = self._html(page)
+            if TRACSE_ID_ANY_RE.search(html):
+                return html
+            page.wait_for_timeout(1000)
+        return html
+
+    def _set_page_size(self, page) -> None:
+        """'100개씩' 선택 후 '적용'.
+
+        고용24 페이지는 사이트 스크립트가 브라우저 기본 객체를 덮어써서 Playwright의
+        select/텍스트 읽기 기능 일부가 깨진다. 그래서 페이지 안에서 값을 직접 넣고
+        버튼을 누른 뒤, 결과는 반환값 대신 HTML로 확인한다.
+        """
+        html = self._html(page)
+        info = find_page_size_control(html)
+        if not info:
+            log.info("페이지 크기 선택 상자 없음")
+            _notice("페이지 크기", "100개 옵션이 있는 select 없음: " + page_size_hint(html))
+            return
+        select_id, value, button_id = info
+        script = (
+            "(() => { const s = document.getElementById(%r); if (!s) return;"
+            " s.value = %r; s.dispatchEvent(new Event('change', {bubbles: true}));"
+            " const b = %s; if (b) b.click(); })()"
+        ) % (select_id, value,
+             f"document.getElementById({button_id!r})" if button_id else
+             "[...document.querySelectorAll('button, a, input')].find(e => /적용/.test(e.innerText || e.value || ''))")
+        try:
+            page.evaluate(script)
+        except Exception as e:  # noqa: BLE001 - 반환값 직렬화 오류는 무시 (동작은 이미 실행됨)
+            log.info("페이지 크기 스크립트 반환 오류(무시): %s", str(e)[:120])
+        self._settle(page)
+        after = self._html(page)
+        ok = bool(re.search(rf'<option[^>]*value="{re.escape(value)}"[^>]*selected', after)) or \
+            len(set(TRACSE_ID_ANY_RE.findall(after))) > 15
+        log.info("페이지 크기 변경: %s", "성공" if ok else "확인 안 됨")
+        if not ok:
+            _notice("페이지 크기", "적용 후에도 100개로 바뀌지 않음 (10개씩 계속 진행)")
+
+    def _go_next(self, page, html: str, target: int) -> bool:
+        """HTML에서 target 페이지 링크(없으면 '다음')를 찾아 누른다."""
+        how = find_page_link(html, target)
+        if not how:
+            return False
+        kind, value = how
+        try:
+            if kind == "onclick":
+                page.locator(f'[onclick="{css_escape(value)}"]').first.click()
+            elif kind == "href":
+                page.locator(f'a[href="{css_escape(value)}"]').first.click()
+            else:  # 텍스트로
+                page.locator("a, button").filter(has_text=re.compile(rf"^\s*{re.escape(value)}\s*$")).last.click()
+            return True
+        except Exception as e:  # noqa: BLE001
+            log.warning("페이지 이동 실패(%s): %s", target, str(e)[:200])
+            return False
+
+    def _extract(self, page, ctx, html: str) -> list[CourseRef]:
+        refs = parse_list_html(html)
         if refs or not self.click_fallback:
-            return list(refs.values())
+            return refs
         return self._extract_by_click(page, ctx)
 
     def _extract_by_click(self, page, ctx) -> list[CourseRef]:

@@ -101,6 +101,11 @@ def parse_detail_text(text: str) -> dict:
             out["start_date"] = _date(*m.group(1, 2, 3))
             out["end_date"] = _date(*m.group(4, 5, 6))
 
+    # 훈련유형: "훈련유형 K-디지털 트레이닝" / "K-디지털 기초역량훈련"
+    m = re.search(r"훈련\s*유형\s*[:：]?\s*([^\n]{2,30}?)\s*(?:훈련\s*기간|\n|$)", t)
+    if m:
+        out["training_type"] = m.group(1).strip()
+
     # 실시회차 "2/2" → 이 과정의 총 회차 수
     m = re.search(r"실시\s*회차" + GAP + r"(\d{1,4})\s*/\s*(\d{1,4})", t)
     if m:
@@ -143,13 +148,21 @@ def parse_detail_text(text: str) -> dict:
     m = re.search(r"수강\s*신청\s*(?:인원)?" + GAP + r"(\d{1,4})\s*명?", t)
     if m:
         out["applicants"] = int(m.group(1))
-    m = _search([r"모집\s*정원" + GAP + r"(\d{1,4})", r"(?<![가-힣])정원" + GAP + r"(\d{1,4})\s*명"], t)
+    m = _search([r"모집\s*(?:정원|인원)" + GAP + r"(\d{1,4})", r"(?<![가-힣])정원" + GAP + r"(\d{1,4})\s*명"], t)
     if m:
         out["capacity"] = int(m.group(1))
 
-    # 만족도: "만족도 4.9 (15명)" / "4.9점 (평가인원 15명)"
-    m = _search([
-        r"만족도\s*(?:점수)?" + GAP + r"(\d(?:\.\d{1,2})?)\s*점?\s*[\(（]\s*(?:평가\s*(?:인원)?\s*[:：]?\s*)?(\d{1,4})\s*명",
+    # 만족도: 실제 고용24 표기 "만족도 (4.3) 수강평 8개" — 과정 전체 평균과 수강평 수
+    m = re.search(r"만족도\s*[\(（]\s*(\d(?:\.\d{1,2})?)\s*[\)）]\s*(?:수강평\s*(\d{1,5})\s*개)?", t)
+    if m:
+        sat = float(m.group(1))
+        if sat > 0:
+            out["satisfaction"] = sat
+        if m.group(2) is not None:
+            out["evaluators"] = int(m.group(2))
+    # 다른 표기: "만족도 4.9 (15명)" / "4.9점 (평가인원 15명)"
+    m = None if "satisfaction" in out or "evaluators" in out else _search([
+        r"만족도\s*(?:점수)?" + GAP + r"(\d(?:\.\d{1,2})?)\s*점?\s*[\(（]\s*(?:평가\s*(?:인원)?\s*[:：]?\s*)?(\d{1,4})\s*(?:명|건|개)?\s*[\)）]",
         r"만족도\s*(?:점수)?" + GAP + r"(\d(?:\.\d{1,2})?)\s*점?",
     ], t)
     if m:
@@ -187,6 +200,21 @@ def parse_detail_text(text: str) -> dict:
     return out
 
 
+def notice_snippets(name: str, text: str) -> None:
+    """GitHub Actions 알림으로 주요 단어 주변 글자를 남긴다 (정규식 맞추기용)."""
+    import os
+    if not os.environ.get("GITHUB_ACTIONS"):
+        return
+    t = re.sub(r"\s+", " ", text)
+    parts = []
+    for kw in ("수강확정인원", "만족도 ", "수료", "취업률", "훈련기간", "훈련시간", "NCS직무분류", "실시현황"):
+        idx = [m.start() for m in re.finditer(kw, t)][:2]
+        for i in idx:
+            parts.append(f"[{kw}] {t[max(0, i - 25):i + 45]}")
+    msg = " | ".join(parts)[:3800].replace("::", ":")
+    print(f"::notice title=상세 페이지 {name}::{msg}")
+
+
 class DetailScraper:
     def __init__(self, delay: float = 1.2, max_pages: int = 1500, dump_dir: Optional[str] = None):
         self.delay = delay
@@ -194,6 +222,7 @@ class DetailScraper:
         self.pages = 0
         self.dump_dir = dump_dir
         self._dumped = 0
+        self._noticed = 0
         self.consecutive_errors = 0
         self.s = requests.Session()
         self.s.headers.update({
@@ -221,9 +250,12 @@ class DetailScraper:
                 r.encoding = r.apparent_encoding or "utf-8"
                 time.sleep(self.delay)
                 text = html_to_text(r.text)
+                got = parse_detail_text(text)
                 if self.dump_dir and self._dumped < 5:
                     self._dump(tracse_id, session, r.text, text)
-                got = parse_detail_text(text)
+                if self.dump_dir and "start_date" in got and self._noticed < 2:
+                    self._noticed += 1
+                    notice_snippets(f"{tracse_id} {session}회차", text)
                 self.consecutive_errors = 0
                 # 기간·회차를 못 읽으면 없는 회차(또는 오류 페이지)로 본다
                 if "start_date" not in got:
