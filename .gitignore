@@ -47,3 +47,9 @@ pids
 # Temporary files
 *.tmp
 *.temp
+
+# Collector outputs
+out/
+__pycache__/
+*.pyc
+.pytest_cache/

@@ -1,0 +1,81 @@
+name: KDT 데이터 수집
+
+on:
+  schedule:
+    # 평일(월~금) 새벽 3시 17분 KST = 전날 18:17 UTC (일~목)
+    - cron: "17 18 * * 0-4"
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "실행 방식"
+        type: choice
+        default: normal
+        options:
+          - normal      # 평소: 목록 확인 + 상세 페이지 최대 1,500개
+          - backfill    # 처음: 상세 페이지 최대 8,000개 (과거 회차 채우기)
+          - inspect     # 시험: 페이지 원본 샘플만 저장 (DB에 안 씀)
+          - migrate     # 구글 시트(시트4) 기존 데이터를 Supabase로 1회 이전
+      max_pages:
+        description: "상세 페이지 최대 수 (비우면 실행 방식 기본값)"
+        required: false
+        default: ""
+
+concurrency:
+  group: kdt-collect
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  collect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 340
+    env:
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+      PYTHONUNBUFFERED: "1"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: crawler/requirements.txt
+
+      - name: 패키지 설치
+        run: |
+          pip install -r crawler/requirements.txt
+          python -m playwright install --with-deps chromium
+
+      - name: 시크릿 확인
+        run: |
+          missing=""
+          [ -z "$SUPABASE_URL" ] && missing="$missing SUPABASE_URL"
+          [ -z "$SUPABASE_SERVICE_ROLE_KEY" ] && missing="$missing SUPABASE_SERVICE_ROLE_KEY"
+          if [ -n "$missing" ]; then
+            echo "::error::저장소 Settings > Secrets and variables > Actions 에 다음 시크릿을 추가하세요:$missing"
+            exit 1
+          fi
+
+      - name: 수집 실행
+        run: |
+          mode="${{ github.event.inputs.mode || 'normal' }}"
+          pages="${{ github.event.inputs.max_pages }}"
+          mkdir -p out
+          case "$mode" in
+            backfill) python -m crawler.main --max-pages "${pages:-8000}" --csv out/sessions.csv ;;
+            inspect)  python -m crawler.main --inspect out/inspect --dry-run --max-pages "${pages:-10}" --max-list-pages 2 --csv out/sessions.csv ;;
+            migrate)  python -m crawler.migrate_sheet ;;
+            *)        python -m crawler.main --max-pages "${pages:-1500}" --csv out/sessions.csv ;;
+          esac
+
+      - name: 결과 파일 보관
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: kdt-collect-${{ github.run_id }}
+          path: out/
+          retention-days: 14
+          if-no-files-found: ignore

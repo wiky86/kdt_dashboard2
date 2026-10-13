@@ -7,7 +7,7 @@
 ### 📊 데이터 검색 및 필터링
 - **기본 검색**: 기관명, 과정명으로 검색
 - **고급 필터**: NCS직무, 훈련시간, 시간당훈련비, 수료율, 취업률, 만족도, 개강일 범위
-- **실시간 검색**: 구글 시트와 연동하여 최신 데이터 제공
+- **자동 수집**: 고용24 KDT 과정 데이터를 평일 새벽마다 자동 수집해 Supabase에 저장
 
 ### 📈 통계 분석
 - **시간별 분석**: 월별, 분기별, 반기별, 연도별 통계
@@ -25,29 +25,34 @@
 - **Frontend**: HTML5, CSS3, Vanilla JavaScript
 - **차트 라이브러리**: Chart.js
 - **아이콘**: Font Awesome
-- **데이터 소스**: Google Sheets API
+- **데이터베이스**: Supabase (PostgreSQL)
+- **데이터 수집**: Python (고용24 웹페이지 크롤링, Playwright), GitHub Actions
 - **스타일링**: shadcn/ui 기반 커스텀 CSS
 
 ## 📁 프로젝트 구조
 
 ```
-Manual Crawl/
 ├── index.html          # 메인 페이지 (검색/목록)
 ├── detail.html         # 상세 페이지 (개별 과정 정보)
 ├── stats.html          # 통계 페이지 (데이터 분석)
 ├── script.js           # 메인 페이지 로직
 ├── detail.js           # 상세 페이지 로직
 ├── stats.js            # 통계 페이지 로직
+├── data.js             # Supabase 데이터 로딩 (공통)
+├── config.js           # Supabase 주소·anon 키
 ├── styles.css          # 공통 스타일시트
-└── README.md           # 프로젝트 문서
+├── crawler/            # 고용24 데이터 수집기 (자세한 설명: crawler/README.md)
+├── supabase/schema.sql # DB 테이블 정의
+└── .github/workflows/collect.yml  # 평일 새벽 자동 수집
 ```
 
 ## 🔧 설정 정보
 
-### Google Sheets 연동
-- **Sheet ID**: `1upfeAj22FEoYAgtSckJLQJ-Tg6FWFxU1ea3IdjfhGzM`
-- **API Key**: `AIzaSyD-zp3ID1MdWeMMQoSMTzHsGcvXZVnNe4k`
-- **데이터 범위**: `시트4!A:Q` (17개 컬럼)
+### 데이터 수집·저장
+- 수집 범위: 고용24 K-디지털 트레이닝(KDT) 전체 과정, 회차 단위
+- 저장소: Supabase `training_sessions` 테이블
+- 실행: GitHub Actions, 평일 새벽 3시 17분(KST)
+- 처음 설정 방법은 [crawler/README.md](crawler/README.md) 참고
 
 ### 데이터 구조
 1. 기관명, 2. 과정명, 3. 훈련비, 4. NCS직무, 5. NCS수준
@@ -69,11 +74,12 @@ Manual Crawl/
 
 ## 🔄 데이터 플로우
 
-1. **페이지 로드** → Google Sheets API 호출
-2. **데이터 파싱** → JavaScript 객체로 변환
-3. **UI 렌더링** → 검색 결과 및 필터 옵션 표시
-4. **사용자 상호작용** → 검색, 필터링, 상세 보기
-5. **데이터 내보내기** → CSV/PDF 형식으로 다운로드
+1. **수집 (평일 새벽)** → 고용24 목록·상세 페이지 크롤링 → Supabase 저장
+2. **페이지 로드** → Supabase REST API 호출
+3. **데이터 파싱** → JavaScript 객체로 변환
+4. **UI 렌더링** → 검색 결과 및 필터 옵션 표시
+5. **사용자 상호작용** → 검색, 필터링, 상세 보기
+6. **데이터 내보내기** → CSV/PDF 형식으로 다운로드
 
 ## 📄 라이선스
 
