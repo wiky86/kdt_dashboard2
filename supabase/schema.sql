@@ -48,7 +48,7 @@ create index if not exists training_sessions_inst_course_idx
 
 -- updated_at 자동 갱신
 create or replace function public.touch_updated_at() returns trigger
-language plpgsql as $$
+language plpgsql set search_path = '' as $$
 begin
     new.updated_at := now();
     return new;
@@ -106,6 +106,7 @@ begin
 end $$;
 
 revoke all on function public.merge_legacy_rows() from public, anon, authenticated;
+grant execute on function public.merge_legacy_rows() to service_role;
 
 -- 상세 페이지가 없던 회차(폐강 등) 기록: 매일 다시 열어보지 않도록
 create table if not exists public.crawl_skips (
