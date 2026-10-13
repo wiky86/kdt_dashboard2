@@ -217,6 +217,11 @@ def log_diagnostics(url: str, title: str, html: str) -> None:
         log.info("[진단] onclick 예시: %s", o)
     ids = TRACSE_ID_ANY_RE.findall(html or "")
     log.info("[진단] HTML 안 과정ID 후보 %d개, 예: %s", len(ids), ", ".join(ids[:3]))
+    import os
+    if os.environ.get("GITHUB_ACTIONS"):
+        sample = (with_id or onclicks or [""])[0].replace("\n", " ")[:140]
+        print(f"::notice title=목록 페이지 진단::제목 {title} / HTML {len(html or '')}자 / onclick {len(onclicks)}개"
+              f"(과정ID {len(with_id)}) / 함수 {', '.join(funcs[:8])} / 예시 {sample}")
 
 
 class ListCrawler:

@@ -343,6 +343,11 @@ def report(rows: list[dict], stats: dict, args, pages: int = 0) -> None:
     if summary:
         with open(summary, "a", encoding="utf-8") as f:
             f.write(text + "\n")
+    if os.environ.get("GITHUB_ACTIONS"):
+        # 실행 목록·API에서 바로 보이도록 한 줄 요약을 알림으로도 남긴다
+        cov = ", ".join(f"{c} {v / total * 100:.0f}%" for c, v in cover.items())
+        print(f"::notice title=KDT 수집 결과::과정 {stats['listed']}개 / 상세 성공 {stats['detail_ok']}, "
+              f"회차 없음 {stats['detail_missing']}, 남음 {stats['remaining']} / 저장 {stats['saved']}행 / {cov}")
 
 
 def main(argv=None) -> int:
