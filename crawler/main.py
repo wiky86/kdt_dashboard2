@@ -34,6 +34,8 @@ from .list_crawler import KDT_CODE, LIST_URL, CourseRef, ListCrawler
 log = logging.getLogger("collector")
 
 KST = timezone(timedelta(hours=9))
+TARGET_TYPE = "K-디지털 트레이닝"   # 이 훈련유형만 저장 (기초역량훈련 등은 건너뜀)
+NOT_TARGET_SESSION = 0             # crawl_skips에 회차 0으로 기록 = 대상 아닌 과정
 
 COURSE_LEVEL = ("ncs_code", "ncs_job", "ncs_level", "training_days", "training_hours")
 SESSION_FIELDS = ("start_date", "end_date", "training_fee", "capacity", "applicants", "confirmed",
@@ -130,6 +132,8 @@ def plan_tasks(courses: dict[tuple, CourseRef], rows: dict[tuple, dict], skips: 
 
     tasks = []
     for ck, ref in courses.items():
+        if days_since(skips.get((*ck, NOT_TARGET_SESSION)), now) < 365:
+            continue  # KDT가 아닌 과정 (1년에 한 번만 다시 확인)
         known = by_course.get(ck, {})
         top = max([ref.tracse_tme, *known.keys()] or [1])
         for s in range(1, top + 1):
@@ -141,11 +145,11 @@ def plan_tasks(courses: dict[tuple, CourseRef], rows: dict[tuple, dict], skips: 
             elif days_since(skips.get(k), now) >= skip_retry_days:
                 # 아직 없는 회차: 최근 회차부터
                 tasks.append((2, *k))
-        # 진행 중인 과정은 다음 회차가 생겼는지 확인
-        if ck in active:
+        # 진행 중인 과정은 다음 회차가 생겼는지 확인 (일주일에 한 번)
+        if ck in active and known:
             k = (*ck, top + 1)
-            if days_since(skips.get(k), now) >= 1:
-                tasks.append((0, *k))
+            if days_since(skips.get(k), now) >= 7:
+                tasks.append((1, *k))
     tasks.sort(key=lambda t: (t[0], -t[3]))
     return tasks
 
@@ -228,6 +232,7 @@ def run(args) -> int:
     sessions_of: dict[tuple, set] = defaultdict(set)
     for (tid, cst, sess) in rows:
         sessions_of[(tid, cst)].add(sess)
+    not_target: set[tuple] = set()
     dirty: set[tuple] = set()
     new_skips: list[tuple] = []
     queued = {t[1:] for t in tasks}
@@ -237,10 +242,19 @@ def run(args) -> int:
         i += 1
         ck, k = (tid, cst), (tid, cst, sess)
         ref = courses[ck]
+        if ck in not_target:
+            continue
         got = scraper.fetch(tid, sess, ref.crse_tracse_se or KDT_CODE, cst)
         if not got:
             stats["detail_missing"] += 1
             new_skips.append(k)
+            continue
+        ttype = got.get("training_type") or ""
+        if ttype and TARGET_TYPE.replace(" ", "") not in ttype.replace(" ", ""):
+            # 기초역량훈련 등: 이 과정은 저장하지 않고, 나머지 회차도 건너뜀
+            not_target.add(ck)
+            new_skips.append((tid, cst, NOT_TARGET_SESSION))
+            stats["not_target"] += 1
             continue
         stats["detail_ok"] += 1
 
@@ -329,7 +343,7 @@ def report(rows: list[dict], stats: dict, args, pages: int = 0) -> None:
         f"## KDT 수집 결과 ({datetime.now(KST):%Y-%m-%d %H:%M} KST){' — dry-run' if args.dry_run else ''}",
         f"- 목록에서 찾은 과정: {stats['listed']}",
         f"- 상세 페이지: {pages}개 열람, 성공 {stats['detail_ok']}, 회차 없음 {stats['detail_missing']}, "
-        f"다음 실행으로 넘김 {stats['remaining']}",
+        f"KDT 아님(건너뜀) {stats['not_target']}, 다음 실행으로 넘김 {stats['remaining']}",
         f"- 저장: {stats['saved']}행 (이름 없어 건너뜀 {stats['skipped_no_name']})",
         f"- DB 전체 회차(이번 실행 기준): {len(rows)}",
         "",
@@ -346,7 +360,7 @@ def report(rows: list[dict], stats: dict, args, pages: int = 0) -> None:
     if os.environ.get("GITHUB_ACTIONS"):
         # 실행 목록·API에서 바로 보이도록 한 줄 요약을 알림으로도 남긴다
         cov = ", ".join(f"{c} {v / total * 100:.0f}%" for c, v in cover.items())
-        print(f"::notice title=KDT 수집 결과::과정 {stats['listed']}개 / 상세 성공 {stats['detail_ok']}, "
+        print(f"::notice title=KDT 수집 결과::과정 {stats['listed']}개 / 상세 성공 {stats['detail_ok']}, KDT아님 {stats['not_target']}, "
               f"회차 없음 {stats['detail_missing']}, 남음 {stats['remaining']} / 저장 {stats['saved']}행 / {cov}")
 
 

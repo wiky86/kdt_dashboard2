@@ -141,7 +141,7 @@ def test_plan_tasks_priorities():
     keys = [t[1:] for t in tasks]
     assert ("AIG1", "500", 1) not in keys
     assert ("AIG2", "600", 1) not in keys
-    assert keys[:2] == [("AIG1", "500", 4), ("AIG1", "500", 2)]   # 다음 회차 확인, 진행 중 회차
+    assert keys[:2] == [("AIG1", "500", 2), ("AIG1", "500", 4)]   # 진행 중 회차, 그다음 다음 회차 확인
     assert ("AIG1", "500", 3) in keys                              # 아직 없는 회차
 
 
@@ -214,7 +214,7 @@ def test_run_end_to_end(monkeypatch, tmp_path):
 
     by = FakeDB.saved
     assert set(by) == {1, 2}
-    assert ("AIG20233000936060", "500020039555", 3) in FakeDB.skips   # 다음 회차는 아직 없음
+    assert FakeDB.skips == []                                          # 처음 보는 과정은 다음 회차 확인 안 함
     r1, r2 = by[1], by[2]
     assert r1["institution"] == "패스트캠퍼스천호학원"
     assert r1["training_hours"] == 900 and r1["ncs_level"] == 5        # 2회차 페이지의 과정 공통값 상속
@@ -278,3 +278,29 @@ def test_find_page_size_control():
             '<option value="100">100개씩</option></select></span>'
             '<button type="button" id="subOptSearchBtn" onclick="sort();">적용</button>')
     assert find_page_size_control("<div>" + html + "</div>") == ("pageRow", "100", "subOptSearchBtn")
+
+
+def test_real_site_satisfaction_and_type():
+    t = ("수강확정인원 0명 / 수강신청인원 0명 / 모집인원 20명 모집중 훈련비 9,410,000 원 만족도 (4.1) 수강평 6개 "
+         "기본정보 훈련유형 K-디지털 트레이닝 훈련기간 2026-11-26 ~ 2027-05-28 (91회차) 주야구분 주간 "
+         "훈련시간 124일, 총 992시간 NCS직무분류 응용SW엔지니어링(20010202) NCS수준 5 수준 도움말")
+    got = parse_detail_text(t)
+    assert got["satisfaction"] == 4.1 and got["evaluators"] == 6
+    assert got["training_type"] == "K-디지털 트레이닝"
+    assert got["capacity"] == 20 and got["confirmed"] == 0 and got["ncs_level"] == 5
+    assert got["training_hours"] == 992 and got["session"] == 91
+    other = parse_detail_text("훈련유형 K-디지털 기초역량훈련 훈련기간 2027-05-19 ~ 2027-06-18 (86회차)")
+    assert other["training_type"] == "K-디지털 기초역량훈련"
+
+
+def test_run_skips_non_kdt_course(monkeypatch):
+    class Scr(FakeScraper):
+        def fetch(self, tid, sess, se, cst):
+            self.pages += 1
+            return parse_detail_text("훈련유형 K-디지털 기초역량훈련 훈련기간 2027-05-19 ~ 2027-06-18 (%d회차)" % sess)
+    monkeypatch.setattr(M, "ListCrawler", FakeList)
+    monkeypatch.setattr(M, "DetailScraper", Scr)
+    monkeypatch.setattr(M, "SupabaseDB", FakeDB)
+    assert M.run(M.parse_args([])) == 0
+    assert FakeDB.saved == {}
+    assert ("AIG20233000936060", "500020039555", 0) in FakeDB.skips

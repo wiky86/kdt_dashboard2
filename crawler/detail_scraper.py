@@ -101,6 +101,11 @@ def parse_detail_text(text: str) -> dict:
             out["start_date"] = _date(*m.group(1, 2, 3))
             out["end_date"] = _date(*m.group(4, 5, 6))
 
+    # 훈련유형: "훈련유형 K-디지털 트레이닝" / "K-디지털 기초역량훈련"
+    m = re.search(r"훈련\s*유형\s*[:：]?\s*([^\n]{2,30}?)\s*(?:훈련\s*기간|\n|$)", t)
+    if m:
+        out["training_type"] = m.group(1).strip()
+
     # 실시회차 "2/2" → 이 과정의 총 회차 수
     m = re.search(r"실시\s*회차" + GAP + r"(\d{1,4})\s*/\s*(\d{1,4})", t)
     if m:
@@ -147,8 +152,16 @@ def parse_detail_text(text: str) -> dict:
     if m:
         out["capacity"] = int(m.group(1))
 
-    # 만족도: "만족도 4.9 (15명)" / "4.9점 (평가인원 15명)"
-    m = _search([
+    # 만족도: 실제 고용24 표기 "만족도 (4.3) 수강평 8개" — 과정 전체 평균과 수강평 수
+    m = re.search(r"만족도\s*[\(（]\s*(\d(?:\.\d{1,2})?)\s*[\)）]\s*(?:수강평\s*(\d{1,5})\s*개)?", t)
+    if m:
+        sat = float(m.group(1))
+        if sat > 0:
+            out["satisfaction"] = sat
+        if m.group(2) is not None:
+            out["evaluators"] = int(m.group(2))
+    # 다른 표기: "만족도 4.9 (15명)" / "4.9점 (평가인원 15명)"
+    m = None if "satisfaction" in out or "evaluators" in out else _search([
         r"만족도\s*(?:점수)?" + GAP + r"(\d(?:\.\d{1,2})?)\s*점?\s*[\(（]\s*(?:평가\s*(?:인원)?\s*[:：]?\s*)?(\d{1,4})\s*(?:명|건|개)?\s*[\)）]",
         r"만족도\s*(?:점수)?" + GAP + r"(\d(?:\.\d{1,2})?)\s*점?",
     ], t)
