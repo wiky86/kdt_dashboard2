@@ -333,3 +333,43 @@ def test_upsert_skips_bad_rows_only():
 def test_bad_rate_text_is_ignored():
     got = parse_detail_text("훈련기간 2025-01-06 ~ 2025-06-20 (3회차) 수료율 1.2.3% 6개월 취업률 2026.")
     assert "completion_rate" not in got and "employment_rate_6m" not in got
+
+
+REAL_LIST_HTML = """<ul><li><div class="box">
+<a href="javascript:void(0)" title="플레이데이터평생교육원 훈련기관정보 새 창 열림"
+   onclick="fn_viewTrainstInfo('AIG20240000458999','8','500020049185','C0061')">플레이데이터평생교육원</a>
+<span>5년인증</span>
+<a href="javascript:void(0)" title="SK네트웍스 Family AI 캠프 훈련과정 정보 새 창 열림"
+   onclick="fn_viewTracseInfo('AIG20240000458999','8','C0104','500020049185')">SK네트웍스 Family AI 캠프</a>
+<p>2026-10-20 ~ 2027-03-30 (8회차)</p></div></li></ul>"""
+
+
+def test_institution_link_is_not_course_name():
+    from crawler.list_crawler import parse_list_html
+    refs = parse_list_html(REAL_LIST_HTML)
+    assert len(refs) == 1
+    r = refs[0]
+    assert r.title == "SK네트웍스 Family AI 캠프"
+    assert r.institution == "플레이데이터평생교육원"
+    assert r.crse_tracse_se == "C0104" and r.tracse_tme == 8
+
+
+def test_run_repairs_wrong_course_names(monkeypatch):
+    class DB(FakeDB):
+        def existing_all(self):
+            return {("AIG20233000936060", "500020039555", 1): {
+                "tracse_id": "AIG20233000936060", "trainst_cstmr_id": "500020039555", "session": 1,
+                "institution": "패스트캠퍼스천호학원", "course_name": "패스트캠퍼스천호학원 훈련기관정보 새 창 열림",
+                "end_date": "2020-01-01", "confirmed": 20, "satisfaction": 4.0,
+                "web_scraped_at": "2099-01-01T00:00:00+00:00"}}
+
+    class NoScrape(FakeScraper):
+        @property
+        def exhausted(self):
+            return True
+
+    monkeypatch.setattr(M, "ListCrawler", FakeList)
+    monkeypatch.setattr(M, "DetailScraper", NoScrape)
+    monkeypatch.setattr(M, "SupabaseDB", DB)
+    assert M.run(M.parse_args([])) == 0
+    assert FakeDB.saved[1]["course_name"] == "(산대특) Open API 기반 공공 빅데이터 자바 개발자 양성과정"

@@ -232,8 +232,24 @@ def run(args) -> int:
     sessions_of: dict[tuple, set] = defaultdict(set)
     for (tid, cst, sess) in rows:
         sessions_of[(tid, cst)].add(sess)
+
+    # 목록의 과정명·기관명으로 기존 회차 이름을 바로잡는다 (예전 버전이 기관 링크 문구를 과정명으로 저장한 경우)
+    renamed_keys: set[tuple] = set()
+    for (tid, cst, sess), r in rows.items():
+        ref = listed.get((tid, cst))
+        if not ref:
+            continue
+        fix = {}
+        if ref.title and r.get("course_name") != ref.title:
+            fix["course_name"] = ref.title
+        if ref.institution and not r.get("institution"):
+            fix["institution"] = ref.institution
+        if fix:
+            rows[(tid, cst, sess)] = merge(r, fix)
+            renamed_keys.add((tid, cst, sess))
+    stats["renamed"] = len(renamed_keys)
     not_target: set[tuple] = set()
-    dirty: set[tuple] = set()
+    dirty: set[tuple] = set(renamed_keys)   # 이름만 바뀐 회차도 저장
     new_skips: list[tuple] = []
     queued = {t[1:] for t in tasks}
     i = 0
@@ -345,6 +361,7 @@ def report(rows: list[dict], stats: dict, args, pages: int = 0) -> None:
         f"- 목록에서 찾은 과정: {stats['listed']}",
         f"- 상세 페이지: {pages}개 열람, 성공 {stats['detail_ok']}, 회차 없음 {stats['detail_missing']}, "
         f"KDT 아님(건너뜀) {stats['not_target']}, 다음 실행으로 넘김 {stats['remaining']}",
+        f"- 이름 바로잡음: {stats['renamed']}행\n"
         f"- 저장: {stats['saved']}행 (이름 없어 건너뜀 {stats['skipped_no_name']}, 저장 실패 {stats['save_failed']})",
         f"- DB 전체 회차(이번 실행 기준): {len(rows)}",
         "",
