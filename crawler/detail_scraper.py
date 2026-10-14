@@ -40,6 +40,15 @@ def _int(s: Optional[str]) -> Optional[int]:
     return int(d) if d else None
 
 
+def _rate(s: Optional[str]) -> Optional[float]:
+    """'53.3' → 53.3. 숫자가 아니거나 0~100 밖이면 None (잘못 읽은 값이 저장되지 않게)."""
+    try:
+        v = float(s)
+    except (TypeError, ValueError):
+        return None
+    return v if 0 <= v <= 100 else None
+
+
 def _search(patterns: list[str], text: str) -> Optional[re.Match]:
     for p in patterns:
         m = re.search(p, text, re.S)
@@ -82,6 +91,11 @@ def parse_names(html: str) -> dict:
             out["course_name"] = c.strip()
             break
     return out
+
+
+def _set(out: dict, key: str, value) -> None:
+    if value is not None:
+        out[key] = value
 
 
 def parse_detail_text(text: str) -> dict:
@@ -182,20 +196,20 @@ def parse_detail_text(text: str) -> dict:
         out["completed"] = int(m.group(1))
     m = re.search(r"수료율" + GAP + r"([\d.]{1,5})\s*%", t)
     if m:
-        out["completion_rate"] = float(m.group(1))
+        _set(out, "completion_rate", _rate(m.group(1)))
 
     # 취업률: "6개월 취업률 53.3%", "3개월 취업률 ..." ("해당없음"이면 안 넣음)
     m = re.search(r"6\s*개월\s*(?:후\s*)?취업률" + GAP + r"([\d.]{1,5})\s*%?", t)
     if m:
-        out["employment_rate_6m"] = float(m.group(1))
+        _set(out, "employment_rate_6m", _rate(m.group(1)))
     m = re.search(r"3\s*개월\s*(?:후\s*)?취업률" + GAP + r"([\d.]{1,5})\s*%?", t)
     if m:
-        out["employment_rate_3m"] = float(m.group(1))
+        _set(out, "employment_rate_3m", _rate(m.group(1)))
     if "employment_rate_6m" not in out:
         # 기간 표시 없이 "취업률 61.1%"만 있으면 6개월 취업률로 본다 (직종별/기관 취업률 제외)
         m = re.search(r"(?<!직종별 )(?<!기관 )(?<!직종 )취업률" + GAP + r"([\d.]{1,5})\s*%", t)
         if m:
-            out["employment_rate_6m"] = float(m.group(1))
+            _set(out, "employment_rate_6m", _rate(m.group(1)))
 
     return out
 
@@ -265,6 +279,9 @@ class DetailScraper:
                     return None
                 got.update({k: v for k, v in parse_names(r.text).items() if k not in got})
                 return got
+            except (ValueError, TypeError, AttributeError, IndexError) as e:
+                log.warning("상세 페이지 해석 실패(%s): %s", url, e)
+                return None
             except requests.RequestException as e:
                 wait = 5 * (attempt + 1)
                 log.warning("상세 페이지 실패(%s), %ss 후 재시도: %s", url, wait, e)
