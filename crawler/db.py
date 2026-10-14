@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 from typing import Iterator, Optional
 
 import requests
@@ -32,6 +33,7 @@ class SupabaseDB:
             raise SupabaseError("SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY가 비어 있습니다.")
         self.base = url.rstrip("/") + "/rest/v1"
         self.dry_run = dry_run
+        self.failed_rows = 0
         self.s = requests.Session()
         self.s.headers.update({
             "apikey": service_key,
@@ -83,10 +85,12 @@ class SupabaseDB:
         if not keys or self.dry_run:
             return
         body = [{"tracse_id": k[0], "trainst_cstmr_id": k[1], "session": k[2], "checked_at": checked_at}
-                for k in keys]
-        r = self.s.post(f"{self.base}/crawl_skips?on_conflict=tracse_id,trainst_cstmr_id,session", json=body,
-                        headers={"Prefer": "resolution=merge-duplicates,return=minimal"}, timeout=60)
-        self._check(r)
+                for k in dict.fromkeys(keys)]   # 같은 키가 두 번 있으면 Postgres가 거부하므로 중복 제거
+        try:
+            r = self._post(f"{self.base}/crawl_skips?on_conflict=tracse_id,trainst_cstmr_id,session", body)
+            self._check(r)
+        except (SupabaseError, requests.RequestException) as e:
+            log.warning("건너뛸 회차 기록 실패(무시): %s", str(e)[:300])
 
     def upsert(self, rows: list[dict], batch: int = 500) -> int:
         """같은 키가 있으면 갱신, 없으면 추가. 모든 행이 같은 컬럼을 갖도록 맞춘다."""
@@ -98,16 +102,40 @@ class SupabaseDB:
             return len(clean)
         n = 0
         for i in range(0, len(clean), batch):
-            part = clean[i:i + batch]
-            r = self.s.post(
-                f"{self.base}/{TABLE}?on_conflict={CONFLICT_COLS}",
-                json=part,
-                headers={"Prefer": "resolution=merge-duplicates,return=minimal"},
-                timeout=120,
-            )
-            self._check(r)
-            n += len(part)
+            n += self._upsert_part(clean[i:i + batch])
         return n
+
+    def _post(self, url: str, body: list) -> requests.Response:
+        """일시적인 네트워크 오류는 3번까지 다시 시도."""
+        import time
+        for attempt in range(3):
+            try:
+                return self.s.post(url, json=body, timeout=120,
+                                   headers={"Prefer": "resolution=merge-duplicates,return=minimal"})
+            except requests.RequestException as e:
+                if attempt == 2:
+                    raise
+                log.warning("Supabase 요청 실패, 재시도: %s", e)
+                time.sleep(5 * (attempt + 1))
+        raise AssertionError("unreachable")
+
+    def _upsert_part(self, part: list[dict]) -> int:
+        """한 묶음 저장. 실패하면 반씩 나눠 다시 시도해서 문제 있는 행만 건너뛴다."""
+        r = self._post(f"{self.base}/{TABLE}?on_conflict={CONFLICT_COLS}", part)
+        if r.status_code < 400:
+            return len(part)
+        if r.status_code >= 500 and len(part) > 1 and "affect row a second time" not in r.text:
+            log.warning("Supabase 서버 오류 %s, 나눠서 재시도", r.status_code)
+        if len(part) == 1:
+            row = part[0]
+            msg = f"저장 실패로 건너뜀: {row.get('tracse_id')} {row.get('session')}회차 — {r.status_code} {r.text[:300]}"
+            log.warning(msg)
+            if os.environ.get("GITHUB_ACTIONS"):
+                print(f"::warning title=저장 실패 행::{msg}")
+            self.failed_rows += 1
+            return 0
+        mid = len(part) // 2
+        return self._upsert_part(part[:mid]) + self._upsert_part(part[mid:])
 
     def insert(self, rows: list[dict], batch: int = 500) -> int:
         """중복 검사 없이 추가 (시트 이전용)."""

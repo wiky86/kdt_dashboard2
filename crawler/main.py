@@ -330,6 +330,7 @@ def save(db: SupabaseDB, rows: dict, dirty: set, stats: dict) -> None:
         batch.append(r)
     n = db.upsert(batch)
     stats["saved"] += n
+    stats["save_failed"] = getattr(db, "failed_rows", 0)
     dirty.clear()
     log.info("중간 저장 %d행 (누적 %d)", n, stats["saved"])
 
@@ -344,7 +345,7 @@ def report(rows: list[dict], stats: dict, args, pages: int = 0) -> None:
         f"- 목록에서 찾은 과정: {stats['listed']}",
         f"- 상세 페이지: {pages}개 열람, 성공 {stats['detail_ok']}, 회차 없음 {stats['detail_missing']}, "
         f"KDT 아님(건너뜀) {stats['not_target']}, 다음 실행으로 넘김 {stats['remaining']}",
-        f"- 저장: {stats['saved']}행 (이름 없어 건너뜀 {stats['skipped_no_name']})",
+        f"- 저장: {stats['saved']}행 (이름 없어 건너뜀 {stats['skipped_no_name']}, 저장 실패 {stats['save_failed']})",
         f"- DB 전체 회차(이번 실행 기준): {len(rows)}",
         "",
         "| 항목 | 채워진 비율 |",
@@ -361,7 +362,7 @@ def report(rows: list[dict], stats: dict, args, pages: int = 0) -> None:
         # 실행 목록·API에서 바로 보이도록 한 줄 요약을 알림으로도 남긴다
         cov = ", ".join(f"{c} {v / total * 100:.0f}%" for c, v in cover.items())
         print(f"::notice title=KDT 수집 결과::과정 {stats['listed']}개 / 상세 성공 {stats['detail_ok']}, KDT아님 {stats['not_target']}, "
-              f"회차 없음 {stats['detail_missing']}, 남음 {stats['remaining']} / 저장 {stats['saved']}행 / {cov}")
+              f"회차 없음 {stats['detail_missing']}, 남음 {stats['remaining']} / 저장 {stats['saved']}행(실패 {stats['save_failed']}) / {cov}")
 
 
 def main(argv=None) -> int:
@@ -369,8 +370,13 @@ def main(argv=None) -> int:
     args = parse_args(argv)
     try:
         return run(args)
-    except Exception:
+    except Exception as e:  # noqa: BLE001
         log.exception("수집 실패")
+        if os.environ.get("GITHUB_ACTIONS"):
+            import traceback
+            tb = traceback.format_exc().strip().splitlines()
+            where = " / ".join(x.strip() for x in tb[-6:])
+            print(f"::error title=수집 실패::{type(e).__name__}: {str(e)[:500]} | {where[:1500]}")
         return 1
 
 

@@ -304,3 +304,32 @@ def test_run_skips_non_kdt_course(monkeypatch):
     assert M.run(M.parse_args([])) == 0
     assert FakeDB.saved == {}
     assert ("AIG20233000936060", "500020039555", 0) in FakeDB.skips
+
+
+def test_upsert_skips_bad_rows_only():
+    from crawler.db import SupabaseDB
+
+    class Resp:
+        def __init__(self, code, text=""):
+            self.status_code, self.text = code, text
+
+    db = SupabaseDB("https://x.supabase.co", "k")
+    sent = []
+
+    def fake_post(url, body):
+        if any(r["session"] == 13 for r in body):
+            return Resp(400, '{"message":"invalid input syntax"}')
+        sent.extend(r["session"] for r in body)
+        return Resp(201)
+
+    db._post = fake_post
+    rows = [{"tracse_id": "A", "trainst_cstmr_id": "1", "session": s, "institution": "i", "course_name": "c"}
+            for s in range(1, 21)]
+    assert db.upsert(rows) == 19
+    assert sorted(sent) == [s for s in range(1, 21) if s != 13]
+    assert db.failed_rows == 1
+
+
+def test_bad_rate_text_is_ignored():
+    got = parse_detail_text("훈련기간 2025-01-06 ~ 2025-06-20 (3회차) 수료율 1.2.3% 6개월 취업률 2026.")
+    assert "completion_rate" not in got and "employment_rate_6m" not in got
