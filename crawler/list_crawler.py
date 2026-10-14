@@ -114,6 +114,18 @@ def _card_of(tag):
     return card
 
 
+INST_LINK_RE = re.compile(r"훈련\s*기관\s*정보|기관\s*정보")
+COURSE_LINK_RE = re.compile(r"훈련\s*과정\s*정보|과정\s*정보")
+INST_FUNC_RE = re.compile(r"Trainst|Inst(?:Info|Dtl)", re.I)
+
+
+def clean_link_title(title: str) -> str:
+    """'자바 과정 훈련과정 정보 새 창 열림' → '자바 과정'."""
+    t = re.sub(r"\s*(?:훈련\s*)?(?:과정|기관)\s*정보.*$", "", title or "")
+    t = re.sub(r"\s*새\s*창\s*열림\s*$", "", t)
+    return t.strip()
+
+
 def parse_list_html(html: str) -> list[CourseRef]:
     """목록 페이지 HTML → CourseRef 목록 (페이지 안 스크립트 없이 파이썬에서 분석)."""
     from bs4 import BeautifulSoup
@@ -131,14 +143,26 @@ def parse_list_html(html: str) -> list[CourseRef]:
             continue
         title_attr = tag.get("title") or ""
         text = tag.get_text(" ", strip=True)
-        title = re.sub(r"\s*훈련과정 정보.*$", "", title_attr).strip()
-        ref.title = title or (text if 3 < len(text) < 150 else "")
-        card = _card_of(tag)
-        inst_el = card.find(attrs={"title": re.compile("기관")})
-        if inst_el is not None:
-            inst = inst_el.get_text(" ", strip=True)
+        onclick = tag.get("onclick") or ""
+        # 기관 링크(예: fn_viewTrainstInfo, title "OO 훈련기관정보 새 창 열림")에도 과정 ID가 들어 있다.
+        # 그런 링크에서는 과정명을 가져오지 않는다.
+        is_inst_link = bool(INST_LINK_RE.search(title_attr) or INST_FUNC_RE.search(onclick)) \
+            and not COURSE_LINK_RE.search(title_attr)
+        is_course_link = bool(COURSE_LINK_RE.search(title_attr))
+        if is_inst_link:
+            ref.title = ""
+            inst = clean_link_title(title_attr) or text
             if 0 < len(inst) < 80:
                 ref.institution = inst
+        else:
+            ref.title = clean_link_title(title_attr) or (text if 3 < len(text) < 150 else "")
+        card = _card_of(tag)
+        if not ref.institution:
+            inst_el = card.find(attrs={"title": INST_LINK_RE})
+            if inst_el is not None:
+                inst = clean_link_title(inst_el.get("title") or "") or inst_el.get_text(" ", strip=True)
+                if 0 < len(inst) < 80:
+                    ref.institution = inst
         ref.card_text = card.get_text("\n", strip=True)[:1500]
         info = parse_card_text(ref.card_text, ref.title)
         if not ref.institution and info.get("institution"):
@@ -147,7 +171,11 @@ def parse_list_html(html: str) -> list[CourseRef]:
             ref.tracse_tme = max(ref.tracse_tme, info["session"])
         if ref.key in refs:
             cur = refs[ref.key]
-            cur.title = cur.title or ref.title
+            if is_course_link and ref.title:
+                cur.title = ref.title                       # 과정 링크의 이름이 가장 정확
+                cur.crse_tracse_se = ref.crse_tracse_se or cur.crse_tracse_se
+            elif not cur.title:
+                cur.title = ref.title
             cur.institution = cur.institution or ref.institution
             cur.tracse_tme = max(cur.tracse_tme, ref.tracse_tme)
         else:
