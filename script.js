@@ -155,6 +155,12 @@ function performSearch() {
     if (ncsJob) {
         filteredData = filteredData.filter(item => item.ncsJob === ncsJob);
     }
+
+    const kdtCategory = (document.getElementById('kdtCategorySelect') || {}).value || '';
+    if (kdtCategory) {
+        filteredData = filteredData.filter(item =>
+            kdtCategory === '__none' ? !item.kdtCategory : item.kdtCategory === kdtCategory);
+    }
     
     if (minHours) {
         filteredData = filteredData.filter(item => 
@@ -236,6 +242,7 @@ function clearSearch() {
     document.getElementById('institutionSearch').value = '';
     document.getElementById('courseSearch').value = '';
     document.getElementById('ncsJobSelect').value = '';
+    document.getElementById('kdtCategorySelect').value = '';
     document.getElementById('minHours').value = '';
     document.getElementById('maxHours').value = '';
     document.getElementById('minHourlyFee').value = '';
@@ -303,7 +310,8 @@ async function loadGoogleSheetsData() {
                 evaluators: row[13] || '',
                 recruitmentRate: row[14] || '',
                 completionRate: row[15] || '',
-                employmentRate: row[16] || ''
+                employmentRate: row[16] || '',
+                kdtCategory: row[17] || ''
             }));
             
             console.log('데이터 로드 완료:', newTabData.length, '개 항목');

@@ -42,7 +42,7 @@
             </div>
             
             <!-- 기본 검색 -->
-            <div class="form-row">
+            <div class="form-row-3">
                 <div class="form-group">
                     <label class="form-label">기관명</label>
                     <input type="text" id="institutionSearch" placeholder="기관명을 입력하세요" class="form-input">
@@ -50,6 +50,16 @@
                 <div class="form-group">
                     <label class="form-label">과정명</label>
                     <input type="text" id="courseSearch" placeholder="과정명을 입력하세요" class="form-input">
+                </div>
+                <div class="form-group">
+                    <label class="form-label" for="kdtCategorySelect">KDT 구분</label>
+                    <select id="kdtCategorySelect" class="form-select">
+                        <option value="">전체</option>
+                        <option value="일반">일반</option>
+                        <option value="단기">단기</option>
+                        <option value="AI캠퍼스">AI캠퍼스</option>
+                        <option value="__none">구분 없음 (이전 데이터)</option>
+                    </select>
                 </div>
             </div>
             

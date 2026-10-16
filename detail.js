@@ -50,7 +50,8 @@ async function loadAllTrainingData(groupKey) {
                 evaluators: row[13] || '',
                 recruitmentRate: row[14] || '',
                 completionRate: row[15] || '',
-                employmentRate: row[16] || ''
+                employmentRate: row[16] || '',
+                kdtCategory: row[17] || ''
             }));
             
             console.log('데이터 로드 완료:', allTrainingData.length, '개 항목');
