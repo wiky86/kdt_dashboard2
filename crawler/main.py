@@ -197,6 +197,9 @@ def run(args) -> int:
         except Exception:
             log.exception("목록 크롤링 실패 — DB에 있는 과정만 갱신합니다")
     stats["listed"] = len(listed)
+    if args.inspect and os.environ.get("GITHUB_ACTIONS"):
+        ids = ",".join(k[0] for k in listed)
+        print(f"::notice title=목록 과정ID::{ids[:3900]}")
     log.info("목록에서 찾은 과정: %d", len(listed))
 
     # 2) DB의 기존 과정과 합치기 ---------------------------------------------
