@@ -32,6 +32,7 @@ create table if not exists public.training_sessions (
     completion_rate     numeric(6,1),    -- 수료율 % (수료/수강확정)
     employment_rate_3m  numeric(6,1),    -- 3개월 취업률 %
     employment_rate_6m  numeric(6,1),    -- 6개월 취업률 %
+    kdt_category        text,            -- KDT 구분: 일반 | 단기 | AI캠퍼스 (목록 필터 기준)
 
     source              text not null default 'crawler',  -- crawler | sheet_migration
     web_scraped_at      timestamptz,
@@ -117,3 +118,6 @@ create table if not exists public.crawl_skips (
     primary key (tracse_id, trainst_cstmr_id, session)
 );
 alter table public.crawl_skips enable row level security;  -- 정책 없음 = service_role만 접근
+
+-- (2026-10) 기존 DB에 KDT 구분 칸 추가
+alter table public.training_sessions add column if not exists kdt_category text;
