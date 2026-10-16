@@ -270,6 +270,17 @@ def safe_title(page) -> str:
 
 def log_diagnostics(url: str, title: str, html: str) -> None:
     """목록을 못 읽을 때 원인을 찾을 수 있도록 핵심 정보를 로그에 남긴다."""
+    import os
+    if os.environ.get("GITHUB_ACTIONS"):
+        flat = re.sub(r"\s+", " ", html or "")
+        hits = [m.start() for m in re.finditer(r"AI\s*캠퍼스", flat)]
+        ctx = " || ".join(flat[max(0, i - 250):i + 150] for i in hits[:3])
+        print(f"::notice title=목록의 AI캠퍼스::{len(hits)}곳 / {ctx[:3000]}")
+        for name in ("crseTracseSeKDT", "crseTracseSe"):
+            m = re.search(rf'name="{name}"[^>]*>(.*?)</select>', flat)
+            opts = re.findall(r'<option[^>]*value="([^"]*)"[^>]*>([^<]*)<', m.group(1)) if m else []
+            boxes = re.findall(rf'<input[^>]*name="{name}"[^>]*value="([^"]*)"[^>]*>\s*(?:<label[^>]*>([^<]*))?', flat)
+            print(f"::notice title=목록 {name} 선택지::select {opts[:20]} / input {boxes[:20]}")
     onclicks = re.findall(r'onclick\s*=\s*"([^"]{0,160})"', html or "")
     with_id = [o for o in onclicks if TRACSE_ID_ANY_RE.search(o)]
     funcs = sorted({m.group(1) for o in onclicks for m in [re.match(r"\s*(?:javascript:)?\s*([\w.$]+)\s*\(", o)] if m})

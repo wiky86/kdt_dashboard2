@@ -224,7 +224,13 @@ def run(args) -> int:
     log.info("전체 과정 %d (목록 %d, DB %d행)", len(courses), len(active), len(rows))
 
     # 3) 상세 페이지 ---------------------------------------------------------
+    if args.inspect:
+        # 진단: '대상 아님'으로 건너뛴 과정도 다시 열어 훈련유형을 확인한다 (DB에는 쓰지 않음)
+        recheck = [(-1, *k[:2], 1) for k in skips if k[2] == NOT_TARGET_SESSION and k[:2] in courses]
+        skips = {k: v for k, v in skips.items() if k[2] != NOT_TARGET_SESSION}
     tasks = plan_tasks(courses, rows, skips, active, today, now, args.rescrape_days)
+    if args.inspect:
+        tasks = recheck[:30] + tasks
     log.info("상세 페이지 대상 %d개 (이번 실행 최대 %d)", len(tasks), args.max_pages)
     scraper = DetailScraper(delay=args.delay, max_pages=args.max_pages,
                             dump_dir=os.path.join(args.inspect, "detail") if args.inspect else None)
@@ -249,6 +255,8 @@ def run(args) -> int:
             renamed_keys.add((tid, cst, sess))
     stats["renamed"] = len(renamed_keys)
     not_target: set[tuple] = set()
+    type_counts: dict[str, int] = {}
+    type_examples: dict[str, list] = {}
     dirty: set[tuple] = set(renamed_keys)   # 이름만 바뀐 회차도 저장
     new_skips: list[tuple] = []
     queued = {t[1:] for t in tasks}
@@ -266,6 +274,9 @@ def run(args) -> int:
             new_skips.append(k)
             continue
         ttype = got.get("training_type") or ""
+        type_counts[ttype or "(못 읽음)"] = type_counts.get(ttype or "(못 읽음)", 0) + 1
+        if len(type_examples.setdefault(ttype or "(못 읽음)", [])) < 2:
+            type_examples[ttype or "(못 읽음)"].append(f"{(ref.title or tid)[:40]}")
         if ttype and TARGET_TYPE.replace(" ", "") not in ttype.replace(" ", ""):
             # 기초역량훈련 등: 이 과정은 저장하지 않고, 나머지 회차도 건너뜀
             not_target.add(ck)
@@ -331,6 +342,10 @@ def run(args) -> int:
             w.writeheader()
             w.writerows(sorted(out, key=lambda r: (r.get("start_date") or ""), reverse=True))
     report(out, stats, args, pages=scraper.pages)
+    if os.environ.get("GITHUB_ACTIONS") and type_counts:
+        msg = " / ".join(f"{t}: {n}개 (예: {', '.join(type_examples.get(t, []))})" for t, n in
+                         sorted(type_counts.items(), key=lambda x: -x[1]))
+        print(f"::notice title=훈련유형 통계::{msg[:3500]}")
     return 0
 
 
