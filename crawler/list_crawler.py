@@ -245,6 +245,26 @@ def find_page_size_control(html: str) -> Optional[tuple[str, str, str]]:
     return None
 
 
+def search_inputs_hint(html: str) -> str:
+    """날짜·기간 등 검색 조건 입력칸의 이름과 값."""
+    from bs4 import BeautifulSoup
+    soup = BeautifulSoup(html or "", "html.parser")
+    out = []
+    for el in soup.find_all("input"):
+        name = el.get("name") or el.get("id") or ""
+        if re.search(r"date|dt|term|period|srch|start|end|kdt|crse", name, re.I) and el.get("type") != "checkbox":
+            out.append(f"{name}={el.get('value', '')}")
+    for el in soup.find_all(["button", "a"]):
+        t = el.get_text(" ", strip=True)
+        if re.fullmatch(r"(1|3|6)\s*개월|1\s*년|전체", t) and "on" in " ".join(el.get("class") or []):
+            out.append(f"[선택된 기간 버튼] {t}")
+    text = re.sub(r"\s+", " ", soup.get_text(" "))
+    m = re.search(r"개강일자.{0,120}", text)
+    if m:
+        out.append("화면: " + m.group(0))
+    return " | ".join(out)[:3000]
+
+
 def total_count_hint(html: str) -> str:
     flat = re.sub(r"<[^>]+>", " ", html or "")
     flat = re.sub(r"\s+", " ", flat)
@@ -422,6 +442,7 @@ class ListCrawler:
         checked = {c: bool(re.search(rf'id="trSe{c}"[^>]*checked', html)) for c in codes}
         log.info("훈련유형 선택: %s", checked)
         _notice("훈련유형 선택", f"{checked} / 주소 {page.url[-160:]} / 총건수 주변: {total_count_hint(html)}")
+        _notice("검색 조건 입력값", search_inputs_hint(html))
 
     def _set_page_size(self, page) -> None:
         """'100개씩' 선택 후 '적용'.
