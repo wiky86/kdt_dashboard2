@@ -11,8 +11,8 @@ on:
         type: choice
         default: normal
         options:
-          - normal      # 평소(매주): 목록 확인 + 상세 페이지 최대 4,000개
-          - backfill    # 처음: 상세 페이지 최대 8,000개 (과거 회차 채우기)
+          - normal      # 평소(매주): 최근 1년 개강 목록 + 상세 페이지 최대 4,000개
+          - backfill    # 과거까지: 2020-12 이후 개강 목록 + 상세 페이지 최대 8,000개
           - inspect     # 시험: 페이지 원본 샘플만 저장 (DB에 안 씀)
           - migrate     # 구글 시트(시트4) 기존 데이터를 Supabase로 1회 이전
       max_pages:
@@ -65,7 +65,7 @@ jobs:
           pages="${{ github.event.inputs.max_pages }}"
           mkdir -p out
           case "$mode" in
-            backfill) python -m crawler.main --max-pages "${pages:-8000}" --csv out/sessions.csv ;;
+            backfill) python -m crawler.main --max-pages "${pages:-8000}" --list-since 2020-12-01 --csv out/sessions.csv ;;
             inspect)  python -m crawler.main --inspect out/inspect --dry-run --max-pages "${pages:-10}" --max-list-pages 2 --csv out/sessions.csv ;;
             migrate)  python -m crawler.migrate_sheet ;;
             *)        python -m crawler.main --max-pages "${pages:-4000}" --csv out/sessions.csv ;;

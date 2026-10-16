@@ -29,7 +29,7 @@ from typing import Any, Optional
 
 from .db import COLUMNS, SupabaseDB
 from .detail_scraper import DetailScraper
-from .list_crawler import KDT_CODE, LIST_URL, CourseRef, ListCrawler
+from .list_crawler import KDT_CODE, KDT_TYPE_CODES, LIST_URL, CourseRef, ListCrawler
 
 log = logging.getLogger("collector")
 
@@ -168,6 +168,8 @@ def parse_args(argv=None):
     p.add_argument("--rescrape-days", type=int, default=7, help="같은 회차를 다시 읽기까지 일수")
     p.add_argument("--skip-list", action="store_true", help="목록 크롤링 생략 (DB에 있는 과정만 갱신)")
     p.add_argument("--list-url", help="목록 페이지 주소 (기본: KDT 목록)")
+    p.add_argument("--list-since", help="목록 개강일자 시작 YYYY-MM-DD (기본: 1년 전, backfill은 2020-12-01)")
+    p.add_argument("--skip-category", action="store_true", help="KDT 구분(AI캠퍼스·단기) 목록 확인 생략")
     p.add_argument("--save-every", type=int, default=200, help="상세 페이지 N개마다 중간 저장")
     p.add_argument("--dry-run", action="store_true", help="DB에 쓰지 않음")
     p.add_argument("--inspect", metavar="DIR", help="목록·상세 페이지 원본 샘플을 DIR에 저장")
@@ -186,15 +188,39 @@ def run(args) -> int:
                     os.environ.get("SUPABASE_SERVICE_ROLE_KEY", ""), dry_run=args.dry_run)
 
     # 1) 목록 페이지 ---------------------------------------------------------
+    #    고용24 목록은 기본으로 '오늘 이후 개강'만 보여준다. 개강일자 시작을 과거로 넓혀야
+    #    이미 개강했거나 끝난 과정까지 나온다.
+    since = date.fromisoformat(args.list_since) if args.list_since else today - timedelta(days=365)
+    since_s = since.strftime("%Y%m%d")
+    until_s = (today + timedelta(days=365)).strftime("%Y%m%d")
+    log.info("목록 개강일자 범위: %s ~ %s", since_s, until_s)
     listed: dict[tuple, CourseRef] = {}
+    category: dict[tuple, str] = {}
     if not args.skip_list:
-        lc = ListCrawler(url=args.list_url or LIST_URL,
+        lc = ListCrawler(url=args.list_url or LIST_URL, start_date=since_s, end_date=until_s,
                          max_pages=args.max_list_pages, headless=not args.headful,
                          dump_dir=os.path.join(args.inspect, "list") if args.inspect else None)
         try:
             listed = lc.crawl()
         except Exception:
             log.exception("목록 크롤링 실패 — DB에 있는 과정만 갱신합니다")
+        # KDT 하위 구분: 상세 페이지에는 'K-디지털 트레이닝'으로만 나와서 목록 필터로 구분한다
+        if listed and not args.skip_category:
+            for label in ("AI캠퍼스", "단기"):
+                try:
+                    sub = ListCrawler(url=args.list_url or LIST_URL, start_date=since_s, end_date=until_s,
+                                      kdt_types=[KDT_TYPE_CODES[label]], max_pages=100,
+                                      headless=not args.headful).crawl()
+                except Exception:
+                    log.exception("%s 목록 확인 실패(무시)", label)
+                    continue
+                stats[f"category_{label}"] = len(sub)
+                log.info("KDT 구분 %s: %d개 과정", label, len(sub))
+                for ck, ref in sub.items():
+                    category.setdefault(ck, label)
+                    listed.setdefault(ck, ref)
+            for ck in listed:
+                category.setdefault(ck, "일반")
     stats["listed"] = len(listed)
     log.info("목록에서 찾은 과정: %d", len(listed))
 
@@ -220,7 +246,13 @@ def run(args) -> int:
         log.error("수집할 과정이 없습니다. 목록 크롤링 결과를 확인하세요 (--inspect).")
         report([], stats, args)
         return 2
-    active = set(listed)
+    # 아직 진행·모집 중인 과정만 '다음 회차'를 확인한다 (넓은 기간의 목록에는 끝난 과정도 섞여 있음)
+    last_end: dict[tuple, str] = {}
+    for k, r in rows.items():
+        if r.get("end_date") and r["end_date"] > last_end.get(k[:2], ""):
+            last_end[k[:2]] = r["end_date"]
+    cutoff = (today - timedelta(days=60)).isoformat()
+    active = {ck for ck in listed if not last_end.get(ck) or last_end[ck] >= cutoff}
     log.info("전체 과정 %d (목록 %d, DB %d행)", len(courses), len(active), len(rows))
 
     # 3) 상세 페이지 ---------------------------------------------------------
@@ -244,6 +276,9 @@ def run(args) -> int:
             fix["course_name"] = ref.title
         if ref.institution and not r.get("institution"):
             fix["institution"] = ref.institution
+        cat = category.get((tid, cst))
+        if cat and r.get("kdt_category") != cat:
+            fix["kdt_category"] = cat
         if fix:
             rows[(tid, cst, sess)] = merge(r, fix)
             renamed_keys.add((tid, cst, sess))
@@ -282,6 +317,8 @@ def run(args) -> int:
                 sib = rows[(tid, cst, s2)]
                 row = merge(row, {c: sib.get(c) for c in COURSE_LEVEL if row.get(c) is None})
         row["crse_tracse_se"] = ref.crse_tracse_se or KDT_CODE
+        if category.get(ck):
+            row["kdt_category"] = category[ck]
         row["institution"] = row.get("institution") or ref.institution or got.get("institution")
         row["course_name"] = ref.title or row.get("course_name") or got.get("course_name")
         row = merge(row, {c: got.get(c) for c in SESSION_FIELDS})
@@ -361,7 +398,7 @@ def report(rows: list[dict], stats: dict, args, pages: int = 0) -> None:
         f"- 목록에서 찾은 과정: {stats['listed']}",
         f"- 상세 페이지: {pages}개 열람, 성공 {stats['detail_ok']}, 회차 없음 {stats['detail_missing']}, "
         f"KDT 아님(건너뜀) {stats['not_target']}, 다음 실행으로 넘김 {stats['remaining']}",
-        f"- 이름 바로잡음: {stats['renamed']}행\n"
+        f"- 이름·구분 갱신: {stats['renamed']}행 / KDT 구분 AI캠퍼스 {stats['category_AI캠퍼스']}개, 단기 {stats['category_단기']}개 과정\n"
         f"- 저장: {stats['saved']}행 (이름 없어 건너뜀 {stats['skipped_no_name']}, 저장 실패 {stats['save_failed']})",
         f"- DB 전체 회차(이번 실행 기준): {len(rows)}",
         "",
@@ -378,7 +415,7 @@ def report(rows: list[dict], stats: dict, args, pages: int = 0) -> None:
     if os.environ.get("GITHUB_ACTIONS"):
         # 실행 목록·API에서 바로 보이도록 한 줄 요약을 알림으로도 남긴다
         cov = ", ".join(f"{c} {v / total * 100:.0f}%" for c, v in cover.items())
-        print(f"::notice title=KDT 수집 결과::과정 {stats['listed']}개 / 상세 성공 {stats['detail_ok']}, KDT아님 {stats['not_target']}, "
+        print(f"::notice title=KDT 수집 결과::과정 {stats['listed']}개(AI캠퍼스 {stats['category_AI캠퍼스']}, 단기 {stats['category_단기']}) / 구분·이름 갱신 {stats['renamed']}행 / 상세 성공 {stats['detail_ok']}, KDT아님 {stats['not_target']}, "
               f"회차 없음 {stats['detail_missing']}, 남음 {stats['remaining']} / 저장 {stats['saved']}행(실패 {stats['save_failed']}) / {cov}")
 
 

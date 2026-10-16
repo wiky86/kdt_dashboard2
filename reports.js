@@ -92,6 +92,13 @@
             desc: '평가인원이 충분한데 만족도가 4.0점 미만인 회차예요.',
         },
         {
+            id: 'aiCampus', icon: 'fa-robot', tone: 'cyan',
+            title: 'AI캠퍼스 과정',
+            sub: () => `${THIS_YEAR}년 개강 K-디지털트레이닝(AI캠퍼스)`,
+            state: () => ({ year: THIS_YEAR, kdt: 'AI캠퍼스', view: 'course', sort: { key: 'firstStart', dir: 'asc' } }),
+            desc: 'KDT 구분이 AI캠퍼스인 과정이에요. 과정별로 회차 수와 미개설 회차를 볼 수 있어요.',
+        },
+        {
             id: 'instStatus', icon: 'fa-building', tone: 'primary',
             title: '기관별 개설 현황',
             sub: () => `${THIS_YEAR}년 기관별 회차·미개설·모집률`,
@@ -102,7 +109,7 @@
 
     // ---------------------------------------------------------------- 상태
     const DEFAULT_STATE = () => ({
-        preset: '', year: '', from: '', to: '', ncs: '', inst: '', course: '',
+        preset: '', year: '', from: '', to: '', ncs: '', inst: '', course: '', kdt: '',
         started: 'all', conds: [], view: 'session', sort: { key: 'start', dir: 'desc' },
     });
     let state = DEFAULT_STATE();
@@ -129,6 +136,8 @@
         return v.length ? v.reduce((a, b) => a + b, 0) / v.length : null;
     };
 
+    const kdtBadge = k => (k && k !== '일반') ? ` <span class="badge badge--kdt">${esc(k)}</span>` : '';
+
     function toast(msg) {
         const t = $('toast');
         t.textContent = msg;
@@ -146,6 +155,7 @@
                 hourlyFee: num(r[7]), session: num(r[8]), start: r[9] || '',
                 capacity: num(r[10]), confirmed: num(r[11]), satisfaction: num(r[12]), evaluators: num(r[13]),
                 recruitRate: num(r[14]), completion: num(r[15]), employment: num(r[16]),
+                kdt: r[17] || '',
             };
             if (o.recruitRate === null && o.capacity && o.confirmed !== null) {
                 o.recruitRate = Math.round(o.confirmed / o.capacity * 1000) / 10;
@@ -169,6 +179,7 @@
             if (s.from && (!r.start || r.start < s.from)) return false;
             if (s.to && (!r.start || r.start > s.to)) return false;
             if (s.ncs && r.ncs !== s.ncs) return false;
+            if (s.kdt && (s.kdt === '__none' ? r.kdt : r.kdt !== s.kdt)) return false;
             if (inst && !r.inst.toLowerCase().includes(inst)) return false;
             if (course && !r.course.toLowerCase().includes(course)) return false;
             if (s.started === 'started' && !r.started) return false;
@@ -213,7 +224,7 @@
             columns: [
                 { key: 'start', label: '개강일', fmt: r => esc(r.start || '-') },
                 { key: 'inst', label: '기관명', fmt: r => esc(r.inst), cls: 'col-text' },
-                { key: 'course', label: '과정명', fmt: r => esc(r.course), cls: 'col-text col-wide' },
+                { key: 'course', label: '과정명', fmt: r => esc(r.course) + kdtBadge(r.kdt), cls: 'col-text col-wide' },
                 { key: 'session', label: '회차', fmt: r => fmtInt(r.session), num: true },
                 { key: 'capacity', label: '정원', fmt: r => fmtInt(r.capacity), num: true },
                 { key: 'confirmed', label: '수강확정', fmt: r => r.unopened ? `<span class="badge badge--danger">0</span>` : fmtInt(r.confirmed), num: true },
@@ -223,7 +234,7 @@
                 { key: 'employment', label: '취업률', fmt: r => fmtPct(r.employment), num: true },
                 { key: 'hourlyFee', label: '시간당훈련비', fmt: r => fmtInt(r.hourlyFee), num: true },
             ],
-            csv: [['개강일', 'start'], ['기관명', 'inst'], ['과정명', 'course'], ['회차', 'session'], ['NCS직무', 'ncs'],
+            csv: [['개강일', 'start'], ['기관명', 'inst'], ['과정명', 'course'], ['회차', 'session'], ['KDT구분', 'kdt'], ['NCS직무', 'ncs'],
                   ['훈련비', 'fee'], ['훈련시간', 'hours'], ['시간당훈련비', 'hourlyFee'], ['모집정원', 'capacity'],
                   ['수강확정', 'confirmed'], ['모집률', 'recruitRate'], ['만족도', 'satisfaction'], ['평가인원', 'evaluators'],
                   ['수료율', 'completion'], ['6개월취업률', 'employment']],
@@ -233,7 +244,7 @@
         course: {
             columns: [
                 { key: 'inst', label: '기관명', fmt: r => esc(r.inst), cls: 'col-text' },
-                { key: 'course', label: '과정명', fmt: r => esc(r.course), cls: 'col-text col-wide' },
+                { key: 'course', label: '과정명', fmt: r => esc(r.course) + kdtBadge(r.kdt), cls: 'col-text col-wide' },
                 { key: 'sessions', label: '해당 회차', fmt: r => fmtInt(r.sessions), num: true },
                 { key: 'unopened', label: '미개설', fmt: r => r.unopened ? `<span class="badge badge--danger">${r.unopened}</span>` : '0', num: true },
                 { key: 'firstStart', label: '첫 개강', fmt: r => esc(r.firstStart || '-') },
@@ -243,11 +254,11 @@
                 { key: 'satisfaction', label: '평균 만족도', fmt: r => fmtSat(r.satisfaction), num: true },
                 { key: 'employment', label: '평균 취업률', fmt: r => fmtPct(r.employment), num: true },
             ],
-            csv: [['기관명', 'inst'], ['과정명', 'course'], ['훈련비', 'fee'], ['해당회차', 'sessions'], ['미개설', 'unopened'],
+            csv: [['기관명', 'inst'], ['과정명', 'course'], ['KDT구분', 'kdt'], ['훈련비', 'fee'], ['해당회차', 'sessions'], ['미개설', 'unopened'],
                   ['첫개강', 'firstStart'], ['마지막개강', 'lastStart'], ['수강확정합계', 'confirmed'],
                   ['평균모집률', 'recruitRate'], ['평균만족도', 'satisfaction'], ['평균취업률', 'employment']],
             build: data => groupBy(data, r => r.groupKey, (k, list) => ({
-                groupKey: k, inst: list[0].inst, course: list[0].course, fee: list[0].fee, ...summarizeGroup(list),
+                groupKey: k, inst: list[0].inst, course: list[0].course, fee: list[0].fee, kdt: list[0].kdt, ...summarizeGroup(list),
             })),
             link: r => r.groupKey,
         },
@@ -343,6 +354,7 @@
         state.from = $('dateFrom').value;
         state.to = $('dateTo').value;
         state.ncs = $('ncsSelect').value;
+        state.kdt = $('kdtSelect').value;
         state.inst = $('instInput').value;
         state.course = $('courseInput').value;
     }
@@ -352,6 +364,7 @@
         $('dateFrom').value = state.from;
         $('dateTo').value = state.to;
         $('ncsSelect').value = state.ncs;
+        $('kdtSelect').value = state.kdt;
         $('instInput').value = state.inst;
         $('courseInput').value = state.course;
         setSeg('startedSeg', state.started);
@@ -374,6 +387,7 @@
         if (s.started === 'started') parts.push('개강일 지남');
         if (s.started === 'upcoming') parts.push('개강 예정');
         if (s.ncs) parts.push(`NCS ${s.ncs}`);
+        if (s.kdt) parts.push(`KDT ${s.kdt === '__none' ? '구분 없음' : s.kdt}`);
         if (s.inst.trim()) parts.push(`기관명에 "${s.inst.trim()}"`);
         if (s.course.trim()) parts.push(`과정명에 "${s.course.trim()}"`);
         for (const c of s.conds) {
@@ -480,7 +494,7 @@
         const p = new URLSearchParams();
         const s = state;
         if (s.preset) p.set('preset', s.preset);
-        for (const k of ['year', 'from', 'to', 'ncs', 'inst', 'course']) if (s[k]) p.set(k, s[k].trim());
+        for (const k of ['year', 'from', 'to', 'ncs', 'inst', 'course', 'kdt']) if (s[k]) p.set(k, s[k].trim());
         if (s.started !== 'all') p.set('started', s.started);
         for (const c of s.conds) p.append('c', `${c.field}:${c.op}:${c.value}`);
         if (s.view !== 'session') p.set('view', s.view);
@@ -493,7 +507,7 @@
         if (![...p.keys()].length) return false;
         const s = DEFAULT_STATE();
         s.preset = p.get('preset') || '';
-        for (const k of ['year', 'from', 'to', 'ncs', 'inst', 'course']) s[k] = p.get(k) || '';
+        for (const k of ['year', 'from', 'to', 'ncs', 'inst', 'course', 'kdt']) s[k] = p.get(k) || '';
         s.started = ['all', 'started', 'upcoming'].includes(p.get('started')) ? p.get('started') : 'all';
         s.conds = p.getAll('c').map(x => {
             const [field, op, ...rest] = x.split(':');
@@ -513,7 +527,7 @@
         for (const id of ['instInput', 'courseInput']) {
             $(id).addEventListener('keydown', e => { if (e.key === 'Enter') { state.preset = ''; run(); } });
         }
-        for (const id of ['yearSelect', 'ncsSelect', 'dateFrom', 'dateTo']) {
+        for (const id of ['yearSelect', 'ncsSelect', 'kdtSelect', 'dateFrom', 'dateTo']) {
             $(id).addEventListener('change', () => { state.preset = ''; run(); });
         }
         $('startedSeg').addEventListener('click', e => {

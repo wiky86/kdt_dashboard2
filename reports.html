@@ -70,6 +70,19 @@
                     <input type="text" id="courseInput" class="form-input" placeholder="예: 데이터">
                 </div>
                 <div class="form-group">
+                    <label class="form-label" for="kdtSelect">KDT 구분</label>
+                    <select id="kdtSelect" class="form-select">
+                        <option value="">전체</option>
+                        <option value="일반">일반</option>
+                        <option value="단기">단기</option>
+                        <option value="AI캠퍼스">AI캠퍼스</option>
+                        <option value="__none">구분 없음 (이전 데이터)</option>
+                    </select>
+                </div>
+            </div>
+
+            <div class="form-row">
+                <div class="form-group">
                     <label class="form-label">개강 상태</label>
                     <div class="segmented" id="startedSeg" role="radiogroup" aria-label="개강 상태">
                         <button type="button" data-value="all" role="radio">전체</button>

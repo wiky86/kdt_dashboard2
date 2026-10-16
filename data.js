@@ -2,13 +2,13 @@
 // 17칸 문자열 배열 형식으로 돌려준다. 그래서 각 페이지의 파싱 코드는 그대로 쓴다.
 //
 // [기관명, 과정명, 훈련비, NCS직무, NCS수준, 훈련일, 훈련시간, 시간당훈련비, 회차, 개강일,
-//  모집정원, 수강확정, 만족도, 평가인원, 모집률, 수료율, 6개월취업률]
+//  모집정원, 수강확정, 만족도, 평가인원, 모집률, 수료율, 6개월취업률, KDT구분]
 
 const TRAINING_COLUMNS = [
     'institution', 'course_name', 'training_fee', 'ncs_job', 'ncs_level',
     'training_days', 'training_hours', 'hourly_fee', 'session', 'start_date',
     'capacity', 'confirmed', 'satisfaction', 'evaluators',
-    'recruitment_rate', 'completion_rate', 'employment_rate_6m'
+    'recruitment_rate', 'completion_rate', 'employment_rate_6m', 'kdt_category'
 ];
 
 function toCell(value) {
@@ -70,6 +70,7 @@ async function loadTrainingRows() {
         toCell(r.evaluators),
         toPercentCell(r.recruitment_rate),
         toPercentCell(r.completion_rate),
-        toRateCell(r.employment_rate_6m)
+        toRateCell(r.employment_rate_6m),
+        toCell(r.kdt_category)
     ]);
 }

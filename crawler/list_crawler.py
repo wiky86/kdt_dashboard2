@@ -288,9 +288,43 @@ def log_diagnostics(url: str, title: str, html: str) -> None:
               f"(과정ID {len(with_id)}) / 함수 {', '.join(funcs[:8])} / 예시 {sample}")
 
 
+# 목록 화면의 KDT 하위 구분 체크박스 코드
+KDT_TYPE_CODES = {
+    "일반": "kdgtal_tgcr_yn",
+    "단기": "kdgtal_tgcr_shrt_yn",
+    "기초역량": "kdgtal_def_tgcr_yn",
+    "AI캠퍼스": "kdgtal_tgcr_ai_cam_yn",
+}
+
+
+def search_inputs_hint(html: str) -> str:
+    """개강일자 입력칸 값 (진단용)."""
+    from bs4 import BeautifulSoup
+    soup = BeautifulSoup(html or "", "html.parser")
+    out = []
+    for el in soup.find_all("input"):
+        name = el.get("name") or el.get("id") or ""
+        if re.search(r"^(start|end)Date", name) and el.get("value"):
+            out.append(f"{name}={el.get('value')}")
+    return " ".join(dict.fromkeys(out))
+
+
+def total_count_hint(html: str) -> str:
+    flat = re.sub(r"<[^>]+>", " ", html or "")
+    flat = re.sub(r"\s+", " ", flat)
+    m = re.search(r"총\s*[\d,]+\s*건", flat)
+    return m.group(0) if m else ""
+
+
 class ListCrawler:
     def __init__(self, url: str = LIST_URL, max_pages: int = 300, headless: bool = True,
-                 dump_dir: Optional[str] = None, click_fallback: bool = True):
+                 dump_dir: Optional[str] = None, click_fallback: bool = True,
+                 start_date: Optional[str] = None, end_date: Optional[str] = None,
+                 kdt_types: Optional[list[str]] = None):
+        """start_date/end_date: 'YYYYMMDD' 개강일자 범위. kdt_types: KDT_TYPE_CODES의 값 목록."""
+        self.start_date = start_date
+        self.end_date = end_date
+        self.kdt_types = kdt_types or []
         self.url = url
         self.max_pages = max_pages
         self.headless = headless
@@ -308,6 +342,8 @@ class ListCrawler:
             page.set_default_timeout(45000)
             page.goto(self.url, wait_until="domcontentloaded")
             self._settle(page)
+            if self.start_date or self.end_date or self.kdt_types:
+                self._apply_search(page)
             self._set_page_size(page)
 
             prev_sig = None
@@ -374,6 +410,29 @@ class ListCrawler:
                 return html
             page.wait_for_timeout(1000)
         return html
+
+    def _apply_search(self, page) -> None:
+        """개강일자 범위와 KDT 하위 구분을 넣고 검색 버튼을 누른다 (DOM 직접 조작)."""
+        script = (
+            "(() => { const setv = (names, v) => { if (!v) return; for (const n of names) {"
+            "   for (const el of document.querySelectorAll(`input[name='${n}'], #${n}`)) {"
+            "     el.value = v; el.dispatchEvent(new Event('change', {bubbles: true})); } } };"
+            " setv(['startDate', 'startDate_datepicker'], %r);"
+            " setv(['endDate', 'endDate_datepicker'], %r);"
+            " for (const c of %r) { const el = document.getElementById('trSe' + c); if (el && !el.checked) el.click(); }"
+            " const btns = [...document.querySelectorAll('button, a, input[type=button], input[type=submit]')];"
+            " const b = btns.find(e => /^\\s*검색(하기)?\\s*$/.test(e.innerText || e.value || '') && e.offsetParent !== null);"
+            " if (b) b.click(); })()"
+        ) % (self.start_date or "", self.end_date or "", list(self.kdt_types))
+        try:
+            page.evaluate(script)
+        except Exception as e:  # noqa: BLE001 - 반환값 직렬화 오류는 무시
+            log.info("검색 조건 스크립트 반환 오류(무시): %s", str(e)[:120])
+        self._settle(page)
+        html = self._html(page)
+        msg = f"개강일자 {search_inputs_hint(html)} / 구분 {self.kdt_types or '전체'} / {total_count_hint(html)}"
+        log.info("검색 조건 적용: %s", msg)
+        _notice("목록 검색 조건", msg)
 
     def _set_page_size(self, page) -> None:
         """'100개씩' 선택 후 '적용'.

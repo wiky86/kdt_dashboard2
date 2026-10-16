@@ -1238,3 +1238,4 @@ select:focus-visible {
 @media (max-width: 768px) {
     #resultCard .btn-group > .btn { width: auto; flex: 1 1 auto; }
 }
+.badge--kdt { background: var(--cyan-light); color: #0e7490; margin-left: 6px; font-size: 11px; vertical-align: 1px; }

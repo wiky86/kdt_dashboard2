@@ -19,7 +19,7 @@ COLUMNS = [
     "training_fee", "ncs_code", "ncs_job", "ncs_level", "training_days", "training_hours",
     "hourly_fee", "start_date", "end_date", "capacity", "applicants", "confirmed",
     "completed", "satisfaction", "evaluators", "recruitment_rate", "completion_rate",
-    "employment_rate_3m", "employment_rate_6m", "source", "web_scraped_at",
+    "employment_rate_3m", "employment_rate_6m", "kdt_category", "source", "web_scraped_at",
 ]
 
 
