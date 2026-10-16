@@ -273,6 +273,8 @@ def log_diagnostics(url: str, title: str, html: str) -> None:
     import os
     if os.environ.get("GITHUB_ACTIONS"):
         flat = re.sub(r"\s+", " ", html or "")
+        total = re.findall(r"총\s*<[^>]*>?\s*([\d,]+)\s*<?[^>]*>?\s*건|총\s*([\d,]+)\s*건", flat)
+        print(f"::notice title=목록 총 건수::{url[-120:]} / {total[:3]}")
         hits = [m.start() for m in re.finditer(r"AI\s*캠퍼스", flat)]
         ctx = " || ".join(flat[max(0, i - 250):i + 150] for i in hits[:3])
         print(f"::notice title=목록의 AI캠퍼스::{len(hits)}곳 / {ctx[:3000]}")

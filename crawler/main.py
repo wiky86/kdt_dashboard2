@@ -188,7 +188,10 @@ def run(args) -> int:
     # 1) 목록 페이지 ---------------------------------------------------------
     listed: dict[tuple, CourseRef] = {}
     if not args.skip_list:
-        lc = ListCrawler(url=args.list_url or LIST_URL,
+        diag_url = (args.list_url or LIST_URL)
+        if args.inspect and os.environ.get("DIAG_AI_CAMPUS", "1") == "1":
+            diag_url = diag_url.replace("crseTracseSeKDT=", "crseTracseSeKDT=kdgtal_tgcr_ai_cam_yn")
+        lc = ListCrawler(url=diag_url,
                          max_pages=args.max_list_pages, headless=not args.headful,
                          dump_dir=os.path.join(args.inspect, "list") if args.inspect else None)
         try:
