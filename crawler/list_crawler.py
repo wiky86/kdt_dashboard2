@@ -245,6 +245,16 @@ def find_page_size_control(html: str) -> Optional[tuple[str, str, str]]:
     return None
 
 
+def total_count_hint(html: str) -> str:
+    flat = re.sub(r"<[^>]+>", " ", html or "")
+    flat = re.sub(r"\s+", " ", flat)
+    m = re.search(r"총\s*[\d,]+\s*건", flat)
+    if m:
+        return m.group(0)
+    i = flat.find("건")
+    return flat[max(0, i - 60):i + 10] if i >= 0 else "(없음)"
+
+
 def _notice(title: str, msg: str) -> None:
     import os
     if os.environ.get("GITHUB_ACTIONS"):
@@ -303,7 +313,9 @@ def log_diagnostics(url: str, title: str, html: str) -> None:
 
 class ListCrawler:
     def __init__(self, url: str = LIST_URL, max_pages: int = 300, headless: bool = True,
-                 dump_dir: Optional[str] = None, click_fallback: bool = True):
+                 dump_dir: Optional[str] = None, click_fallback: bool = True,
+                 kdt_types: Optional[list[str]] = None):
+        self.kdt_types = kdt_types or []
         self.url = url
         self.max_pages = max_pages
         self.headless = headless
@@ -321,6 +333,8 @@ class ListCrawler:
             page.set_default_timeout(45000)
             page.goto(self.url, wait_until="domcontentloaded")
             self._settle(page)
+            if self.kdt_types:
+                self._apply_kdt_types(page)
             self._set_page_size(page)
 
             prev_sig = None
@@ -387,6 +401,27 @@ class ListCrawler:
                 return html
             page.wait_for_timeout(1000)
         return html
+
+    def _apply_kdt_types(self, page) -> None:
+        """훈련유형(K-디지털트레이닝/단기/기초역량/AI캠퍼스) 체크박스를 고르고 검색한다."""
+        codes = list(self.kdt_types)
+        script = (
+            "(() => { const codes = %s;"
+            " for (const c of codes) { const el = document.getElementById('trSe' + c);"
+            "   if (el && !el.checked) el.click(); }"
+            " const btns = [...document.querySelectorAll('button, a, input[type=button], input[type=submit]')];"
+            " const b = btns.find(e => /^\\s*검색(하기)?\\s*$/.test(e.innerText || e.value || '') && e.offsetParent !== null);"
+            " if (b) b.click(); })()"
+        ) % (repr(codes),)
+        try:
+            page.evaluate(script)
+        except Exception as e:  # noqa: BLE001
+            log.info("훈련유형 선택 스크립트 반환 오류(무시): %s", str(e)[:120])
+        self._settle(page)
+        html = self._html(page)
+        checked = {c: bool(re.search(rf'id="trSe{c}"[^>]*checked', html)) for c in codes}
+        log.info("훈련유형 선택: %s", checked)
+        _notice("훈련유형 선택", f"{checked} / 주소 {page.url[-160:]} / 총건수 주변: {total_count_hint(html)}")
 
     def _set_page_size(self, page) -> None:
         """'100개씩' 선택 후 '적용'.
