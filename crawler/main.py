@@ -363,6 +363,14 @@ def run(args) -> int:
                     r2.update({c: row.get(c) for c in COURSE_LEVEL})
                     sessions_of[ck].add(s2)
                     stats["block_new_sessions"] += 1
+                vals = dict(vals)
+                ed2 = vals.get("end_date") or r2.get("end_date")
+                if ed2:
+                    # 종강 후 3·6개월이 지나기 전 값은 집계 중이라 0%로 보일 수 있어 저장하지 않는다
+                    if date.fromisoformat(ed2) + timedelta(days=92) > today:
+                        vals.pop("employment_rate_3m", None)
+                    if date.fromisoformat(ed2) + timedelta(days=183) > today:
+                        vals.pop("employment_rate_6m", None)
                 r2 = merge(r2, {c: vals.get(c) for c in BLOCK_FIELDS})
                 # 만족도는 회차별 값으로 (페이지 위쪽 '만족도 (4.3)'은 과정 전체 평균이라 쓰지 않음)
                 r2["satisfaction"] = vals.get("satisfaction")
