@@ -346,7 +346,7 @@ class DetailScraper:
                     return None
                 got.update({k: v for k, v in parse_names(r.text).items() if k not in got})
                 # '다른회차 정보보기' 탭: 페이지가 열린 뒤 별도 요청으로 불러온다 (과정의 모든 회차 실적)
-                got["sessions"] = self.fetch_sessions(tracse_id)
+                got["sessions"] = self.fetch_sessions(tracse_id, session)
                 return got
             except (ValueError, TypeError, AttributeError, IndexError) as e:
                 log.warning("상세 페이지 해석 실패(%s): %s", url, e)
@@ -360,11 +360,14 @@ class DetailScraper:
 
     OTHER_TME_URL = "https://www.work24.go.kr/hr/a/a/3100/selectOtherTracseTmeTab.do"
 
-    def fetch_sessions(self, tracse_id: str) -> dict[int, dict]:
-        """'다른회차 정보보기' 탭 HTML을 받아 {회차: 실적}으로. 실패하면 빈 dict."""
+    def fetch_sessions(self, tracse_id: str, session: int | str) -> dict[int, dict]:
+        """'다른회차 정보보기' 탭 HTML을 받아 {회차: 실적}으로. 실패하면 빈 dict.
+
+        tracseTme(실제로 있는 회차 아무거나)를 같이 보내야 취업률 칸이 채워져서 온다.
+        """
         for attempt in range(2):
             try:
-                r = self.s.post(self.OTHER_TME_URL, data={"tracseId": tracse_id, "mobileYn": "N"},
+                r = self.s.post(self.OTHER_TME_URL, data={"tracseId": tracse_id, "tracseTme": str(session), "mobileYn": "N"},
                                 headers={"X-Requested-With": "XMLHttpRequest"}, timeout=30)
                 r.raise_for_status()
                 r.encoding = r.apparent_encoding or "utf-8"
