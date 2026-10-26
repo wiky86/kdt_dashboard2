@@ -301,6 +301,7 @@ class DetailScraper:
         self.dump_dir = dump_dir
         self._dumped = 0
         self._noticed = 0
+        self._block_notes = 0
         self.consecutive_errors = 0
         self.s = requests.Session()
         self.s.headers.update({
@@ -344,6 +345,18 @@ class DetailScraper:
                 got.update({k: v for k, v in parse_names(r.text).items() if k not in got})
                 # 숨겨진 '다른회차 정보보기' 영역은 화면에 안 보여도 HTML에 들어 있다
                 got["sessions"] = parse_session_blocks(BeautifulSoup(r.text, "html.parser").get_text(" "))
+                if self.dump_dir and self._block_notes < 3:
+                    self._block_notes += 1
+                    import os
+                    if os.environ.get("GITHUB_ACTIONS"):
+                        raw = r.text
+                        i = raw.find("고용보험가입 6개월")
+                        flat = re.sub(r"<[^>]+>", "§", raw[max(0, i - 1500):i + 300]) if i >= 0 else ""
+                        flat = re.sub(r"\s+", " ", flat)
+                        flat = re.sub(r"§(\s*§)+", "§", flat)
+                        print(f"::notice title=다른회차 영역 진단 {session}회차::HTML {len(raw)}자 / "
+                              f"'고용보험가입' {raw.count('고용보험가입')}번 / '보러가기' {raw.count('보러가기')}번 / "
+                              f"파싱 {len(got['sessions'])}회차 / 주변: {flat[-1200:]}")
                 return got
             except (ValueError, TypeError, AttributeError, IndexError) as e:
                 log.warning("상세 페이지 해석 실패(%s): %s", url, e)
