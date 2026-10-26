@@ -343,20 +343,8 @@ class DetailScraper:
                     # 없는 회차를 요청하면 다른 회차로 넘어가는 경우
                     return None
                 got.update({k: v for k, v in parse_names(r.text).items() if k not in got})
-                # 숨겨진 '다른회차 정보보기' 영역은 화면에 안 보여도 HTML에 들어 있다
-                got["sessions"] = parse_session_blocks(BeautifulSoup(r.text, "html.parser").get_text(" "))
-                if self.dump_dir and self._block_notes < 3:
-                    self._block_notes += 1
-                    import os
-                    if os.environ.get("GITHUB_ACTIONS"):
-                        raw = r.text
-                        i = raw.find("고용보험가입 6개월")
-                        flat = re.sub(r"<[^>]+>", "§", raw[max(0, i - 1500):i + 300]) if i >= 0 else ""
-                        flat = re.sub(r"\s+", " ", flat)
-                        flat = re.sub(r"§(\s*§)+", "§", flat)
-                        print(f"::notice title=다른회차 영역 진단 {session}회차::HTML {len(raw)}자 / "
-                              f"'고용보험가입' {raw.count('고용보험가입')}번 / '보러가기' {raw.count('보러가기')}번 / "
-                              f"파싱 {len(got['sessions'])}회차 / 주변: {flat[-1200:]}")
+                # '다른회차 정보보기' 탭: 페이지가 열린 뒤 별도 요청으로 불러온다 (과정의 모든 회차 실적)
+                got["sessions"] = self.fetch_sessions(tracse_id)
                 return got
             except (ValueError, TypeError, AttributeError, IndexError) as e:
                 log.warning("상세 페이지 해석 실패(%s): %s", url, e)
@@ -367,6 +355,31 @@ class DetailScraper:
                 time.sleep(wait)
         self.consecutive_errors += 1
         return None
+
+    OTHER_TME_URL = "https://www.work24.go.kr/hr/a/a/3100/selectOtherTracseTmeTab.do"
+
+    def fetch_sessions(self, tracse_id: str) -> dict[int, dict]:
+        """'다른회차 정보보기' 탭 HTML을 받아 {회차: 실적}으로. 실패하면 빈 dict."""
+        for attempt in range(2):
+            try:
+                r = self.s.post(self.OTHER_TME_URL, data={"tracseId": tracse_id, "mobileYn": "N"},
+                                headers={"X-Requested-With": "XMLHttpRequest"}, timeout=30)
+                r.raise_for_status()
+                r.encoding = r.apparent_encoding or "utf-8"
+                time.sleep(self.delay / 2)
+                blocks = parse_session_blocks(BeautifulSoup(r.text, "html.parser").get_text(" "))
+                if self.dump_dir and self._block_notes < 2:
+                    self._block_notes += 1
+                    import os
+                    if os.environ.get("GITHUB_ACTIONS"):
+                        sample = sorted(blocks.items())[-2:] if blocks else []
+                        print(f"::notice title=다른회차 탭 {tracse_id[-6:]}::HTML {len(r.text)}자 / "
+                              f"파싱 {len(blocks)}회차 / 예: {sample}"[:1500])
+                return blocks
+            except (requests.RequestException, ValueError) as e:
+                log.warning("다른회차 탭 실패(%s): %s", tracse_id, e)
+                time.sleep(3)
+        return {}
 
     def _dump(self, tracse_id: str, session, html: str, text: str) -> None:
         import os
