@@ -372,9 +372,11 @@ class DetailScraper:
                     self._block_notes += 1
                     import os
                     if os.environ.get("GITHUB_ACTIONS"):
-                        sample = sorted(blocks.items())[-2:] if blocks else []
-                        print(f"::notice title=다른회차 탭 {tracse_id[-6:]}::HTML {len(r.text)}자 / "
-                              f"파싱 {len(blocks)}회차 / 예: {sample}"[:1500])
+                        flat = re.sub(r"\s+", " ", BeautifulSoup(r.text, "html.parser").get_text(" "))
+                        i = flat.find("고용보험가입 6개월", flat.find("고용보험가입 6개월") + 1)
+                        i = flat.find("고용보험가입 6개월", i + 1)
+                        print(f"::notice title=다른회차 탭 {tracse_id[-6:]}::파싱 {len(blocks)}회차 / 원문: "
+                              f"{flat[max(0, i - 700):i + 250]}"[:1500])
                 return blocks
             except (requests.RequestException, ValueError) as e:
                 log.warning("다른회차 탭 실패(%s): %s", tracse_id, e)
