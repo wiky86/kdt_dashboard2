@@ -229,6 +229,70 @@ def notice_snippets(name: str, text: str) -> None:
     print(f"::notice title=상세 페이지 {name}::{msg}")
 
 
+# ---------------------------------------------------------------------------
+# '다른회차 정보보기' 영역: 한 페이지에 그 과정의 모든 회차 실적이 들어 있다
+#   "28회차 모집마감 훈련비 13,762,240 원 ... 훈련기간 2024-10-15 ~ 2025-04-04 ...
+#    모집인원 25명 수강확정인원 15명 수강신청인원 (…): 15명 만족도 100점 기준84.7 점 (14 명)
+#    취업률 고용보험가입 3개월 44.4% (4/9) 취업률 고용보험가입 6개월 66.7% (6/9)
+#    취업률 고용보험미가입 3개월 11.1% (1/9) 취업률 고용보험미가입 6개월 11.1% (1/9) … 실시여부 Y"
+#   아직 집계 전이면 취업률 자리에 '훈련진행중' 같은 글자가 온다.
+# ---------------------------------------------------------------------------
+
+BLOCK_START_RE = re.compile(r"(\d{1,4})\s*회차\s+(?:[가-힣]{2,6}\s+)?훈련비\s+([\d,]+)\s*원")
+
+
+def _emp(block: str, label: str) -> tuple[Optional[float], Optional[int], Optional[int]]:
+    m = re.search(label + r"\s*([\d.]+)\s*%\s*\(\s*(\d+)\s*/\s*(\d+)\s*\)", block)
+    if not m:
+        return None, None, None
+    return _rate(m.group(1)), int(m.group(2)), int(m.group(3))
+
+
+def parse_session_blocks(text: str) -> dict[int, dict]:
+    """상세 페이지 전체 텍스트 → {회차: 값}. 영역이 없으면 빈 dict."""
+    t = re.sub(r"\s+", " ", text or "")
+    starts = list(BLOCK_START_RE.finditer(t))
+    out: dict[int, dict] = {}
+    for i, m in enumerate(starts):
+        end = starts[i + 1].start() if i + 1 < len(starts) else min(len(t), m.end() + 1500)
+        block = t[m.start():end]
+        if "취업률" not in block and "수강확정인원" not in block:
+            continue  # 페이지 위쪽의 현재 회차 요약 등 다른 영역
+        sess = int(m.group(1))
+        v: dict = {"training_fee": _int(m.group(2))}
+        d = re.search(DATE + r"\s*~\s*" + DATE, block)
+        if d:
+            v["start_date"] = _date(*d.group(1, 2, 3))
+            v["end_date"] = _date(*d.group(4, 5, 6))
+        for key, pat in (("capacity", r"모집\s*인원\s*(\d{1,4})\s*명"),
+                         ("confirmed", r"수강\s*확정\s*인원\s*(\d{1,4})\s*명"),
+                         ("applicants", r"수강\s*신청\s*인원[^0-9]{0,40}?(\d{1,4})\s*명")):
+            mm = re.search(pat, block)
+            if mm:
+                v[key] = int(mm.group(1))
+        mm = re.search(r"100\s*점\s*기준\s*([\d.]+)\s*점\s*\(\s*(\d*)\s*명\s*\)", block)
+        if mm:
+            score = float(mm.group(1))
+            cnt = int(mm.group(2)) if mm.group(2) else 0
+            if score > 0 and cnt > 0:
+                v["satisfaction"] = round(score / 20, 1)   # 100점 → 5점 (기존 시트와 같은 척도)
+                v["evaluators"] = cnt
+        r3, _, _ = _emp(block, r"고용보험\s*가입\s*3\s*개월")
+        r6, hired6, base6 = _emp(block, r"고용보험\s*가입\s*6\s*개월")
+        u6, uhired6, _ = _emp(block, r"고용보험\s*미가입\s*6\s*개월")
+        if r3 is not None:
+            v["employment_rate_3m"] = r3
+        if r6 is not None:
+            v["employment_rate_6m"] = r6
+        if base6 is not None:
+            v["employment_base"] = base6            # 취업률 산정 대상 인원
+        mm = re.search(r"실시\s*여부\s*([YN])\b", block)
+        if mm:
+            v["held"] = mm.group(1) == "Y"
+        out[sess] = v
+    return out
+
+
 class DetailScraper:
     def __init__(self, delay: float = 1.2, max_pages: int = 1500, dump_dir: Optional[str] = None):
         self.delay = delay
@@ -278,6 +342,8 @@ class DetailScraper:
                     # 없는 회차를 요청하면 다른 회차로 넘어가는 경우
                     return None
                 got.update({k: v for k, v in parse_names(r.text).items() if k not in got})
+                # 숨겨진 '다른회차 정보보기' 영역은 화면에 안 보여도 HTML에 들어 있다
+                got["sessions"] = parse_session_blocks(BeautifulSoup(r.text, "html.parser").get_text(" "))
                 return got
             except (ValueError, TypeError, AttributeError, IndexError) as e:
                 log.warning("상세 페이지 해석 실패(%s): %s", url, e)

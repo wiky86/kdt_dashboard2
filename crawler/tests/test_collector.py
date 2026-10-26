@@ -373,3 +373,47 @@ def test_run_repairs_wrong_course_names(monkeypatch):
     monkeypatch.setattr(M, "SupabaseDB", DB)
     assert M.run(M.parse_args([])) == 0
     assert FakeDB.saved[1]["course_name"] == "(산대특) Open API 기반 공공 빅데이터 자바 개발자 양성과정"
+
+
+BLOCKS_TEXT = (
+    "훈련일정 및 수강신청 정보 "
+    "29회차 모집마감 훈련비 13,762,240 원 본인부담금 0 원 훈련기간 2024-12-10 ~ 2025-06-04 "
+    "수강신청 정보 표로 모집인원, 구직자/수강인원, 만족도, 취업율 고용보험가입 개월, 훈련과정 상세 정보를 나타냄. "
+    "모집인원 25명 수강확정인원 17명 수강신청인원 (선발 및 검토대기인원포함): 17명 만족도 만족도 100점 기준91.4 점 (15 명) "
+    "취업률 고용보험가입 3개월 30.8% (4/13) 취업률 고용보험가입 6개월 61.5% (8/13) "
+    "취업률 고용보험미가입 3개월 0% (0/13) 취업률 고용보험미가입 6개월 15.4% (2/13) 훈련과정 상세정보 29회차 보러가기 실시여부 Y "
+    "30회차 모집중 훈련비 13,762,240 원 본인부담금 0 원 훈련기간 2026-11-02 ~ 2027-04-20 "
+    "모집인원 25명 수강확정인원 0명 수강신청인원 (선발 및 검토대기인원포함): 0명 만족도 만족도 100점 기준0 점 ( 명) "
+    "취업률 고용보험가입 3개월 훈련진행중 취업률 고용보험가입 6개월 훈련진행중 훈련과정 상세정보 30회차 보러가기 실시여부"
+)
+
+
+def test_parse_session_blocks():
+    from crawler.detail_scraper import parse_session_blocks
+    b = parse_session_blocks(BLOCKS_TEXT)
+    assert set(b) == {29, 30}
+    assert b[29]["employment_rate_6m"] == 61.5 and b[29]["employment_rate_3m"] == 30.8
+    assert b[29]["satisfaction"] == 4.6 and b[29]["evaluators"] == 15
+    assert b[29]["confirmed"] == 17 and b[29]["capacity"] == 25 and b[29]["end_date"] == "2025-06-04"
+    assert "employment_rate_6m" not in b[30] and "satisfaction" not in b[30]
+
+
+def test_run_applies_blocks_to_all_sessions(monkeypatch):
+    from crawler.detail_scraper import parse_session_blocks
+
+    class Scr(FakeScraper):
+        def fetch(self, tid, sess, se, cst):
+            self.pages += 1
+            got = parse_detail_text(PAGES[2]) if sess == 2 else None
+            if got:
+                got["sessions"] = parse_session_blocks(BLOCKS_TEXT.replace("29회차", "1회차").replace("30회차", "2회차"))
+            return got
+
+    monkeypatch.setattr(M, "ListCrawler", FakeList)
+    monkeypatch.setattr(M, "DetailScraper", Scr)
+    monkeypatch.setattr(M, "SupabaseDB", FakeDB)
+    assert M.run(M.parse_args(["--skip-category"])) == 0
+    by = FakeDB.saved
+    assert by[1]["employment_rate_6m"] == 61.5 and by[1]["satisfaction"] == 4.6 and by[1]["evaluators"] == 15
+    assert by[1]["institution"] == "패스트캠퍼스천호학원"          # 블록으로 새로 생긴 회차도 과정 정보 상속
+    assert by[2]["satisfaction"] is None                           # 과정 평균(4.9)이 아닌 회차별 값(아직 없음)

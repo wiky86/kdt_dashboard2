@@ -13,6 +13,7 @@ on:
         options:
           - normal      # 평소(매주): 최근 1년 개강 목록 + 상세 페이지 최대 4,000개
           - backfill    # 과거까지: 2020-12 이후 개강 목록 + 상세 페이지 최대 8,000개
+          - refresh     # 전체 과정 회차별 실적(취업률·만족도) 일괄 갱신, 과정당 1페이지
           - inspect     # 시험: 페이지 원본 샘플만 저장 (DB에 안 씀)
           - migrate     # 구글 시트(시트4) 기존 데이터를 Supabase로 1회 이전
       max_pages:
@@ -67,6 +68,7 @@ jobs:
           case "$mode" in
             backfill) python -m crawler.main --max-pages "${pages:-8000}" --list-since 2020-12-01 --csv out/sessions.csv ;;
             inspect)  python -m crawler.main --inspect out/inspect --dry-run --max-pages "${pages:-10}" --max-list-pages 2 --csv out/sessions.csv ;;
+            refresh)  python -m crawler.main --refresh-all --skip-list --max-pages "${pages:-8000}" --csv out/sessions.csv ;;
             migrate)  python -m crawler.migrate_sheet ;;
             *)        python -m crawler.main --max-pages "${pages:-4000}" --csv out/sessions.csv ;;
           esac
