@@ -264,18 +264,20 @@ def parse_session_blocks(text: str) -> dict[int, dict]:
         if d:
             v["start_date"] = _date(*d.group(1, 2, 3))
             v["end_date"] = _date(*d.group(4, 5, 6))
-        for key, pat in (("capacity", r"모집\s*인원\s*(\d{1,4})\s*명"),
+        for key, pat in (("capacity", r"모집\s*인원\s*(?:\(\s*정원\s*\))?\s*(\d{1,4})\s*명"),
                          ("confirmed", r"수강\s*확정\s*인원\s*(\d{1,4})\s*명"),
                          ("applicants", r"수강\s*신청\s*인원[^0-9]{0,40}?(\d{1,4})\s*명")):
             mm = re.search(pat, block)
             if mm:
                 v[key] = int(mm.group(1))
-        mm = re.search(r"100\s*점\s*기준\s*([\d.]+)\s*점\s*\(\s*(\d*)\s*명\s*\)", block)
+        # "만족도 100점 기준91.1 점 (4.6 / 16명)" 또는 "만족도 100점 기준84.7 점 (14 명)"
+        mm = re.search(r"100\s*점\s*기준\s*([\d.]+)\s*점\s*\(\s*(?:([\d.]+)\s*/\s*)?(\d*)\s*명\s*\)", block)
         if mm:
             score = float(mm.group(1))
-            cnt = int(mm.group(2)) if mm.group(2) else 0
+            cnt = int(mm.group(3)) if mm.group(3) else 0
             if score > 0 and cnt > 0:
-                v["satisfaction"] = round(score / 20, 1)   # 100점 → 5점 (기존 시트와 같은 척도)
+                five = float(mm.group(2)) if mm.group(2) else round(score / 20, 1)   # 5점 척도 (기존 시트와 같음)
+                v["satisfaction"] = five
                 v["evaluators"] = cnt
         r3, _, _ = _emp(block, r"고용보험\s*가입\s*3\s*개월")
         r6, hired6, base6 = _emp(block, r"고용보험\s*가입\s*6\s*개월")
@@ -368,15 +370,18 @@ class DetailScraper:
                 r.encoding = r.apparent_encoding or "utf-8"
                 time.sleep(self.delay / 2)
                 blocks = parse_session_blocks(BeautifulSoup(r.text, "html.parser").get_text(" "))
-                if self.dump_dir and self._block_notes < 2:
+                n_emp = sum(1 for v in blocks.values() if v.get("employment_rate_6m") is not None)
+                if self.dump_dir and self._block_notes < 4 and n_emp:
                     self._block_notes += 1
                     import os
                     if os.environ.get("GITHUB_ACTIONS"):
                         flat = re.sub(r"\s+", " ", BeautifulSoup(r.text, "html.parser").get_text(" "))
-                        i = flat.find("고용보험가입 6개월", flat.find("고용보험가입 6개월") + 1)
-                        i = flat.find("고용보험가입 6개월", i + 1)
-                        print(f"::notice title=다른회차 탭 {tracse_id[-6:]}::파싱 {len(blocks)}회차 / 원문: "
-                              f"{flat[max(0, i - 700):i + 250]}"[:1500])
+                        m = re.search(r"고용보험가입 6개월\s*[\d.]+\s*%", flat)
+                        i = m.start() if m else 0
+                        ex = [(k, v.get("employment_rate_3m"), v.get("employment_rate_6m"), v.get("satisfaction"))
+                              for k, v in sorted(blocks.items()) if v.get("employment_rate_6m") is not None][:4]
+                        print(f"::notice title=다른회차 취업률 {tracse_id[-6:]}::파싱 {len(blocks)}회차 중 6개월 취업률 {n_emp} / "
+                              f"예 {ex} / 원문: {flat[max(0, i - 300):i + 200]}"[:1500])
                 return blocks
             except (requests.RequestException, ValueError) as e:
                 log.warning("다른회차 탭 실패(%s): %s", tracse_id, e)

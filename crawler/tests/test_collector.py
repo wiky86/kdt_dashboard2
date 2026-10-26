@@ -417,3 +417,21 @@ def test_run_applies_blocks_to_all_sessions(monkeypatch):
     assert by[1]["employment_rate_6m"] == 61.5 and by[1]["satisfaction"] == 4.6 and by[1]["evaluators"] == 15
     assert by[1]["institution"] == "패스트캠퍼스천호학원"          # 블록으로 새로 생긴 회차도 과정 정보 상속
     assert by[2]["satisfaction"] is None                           # 과정 평균(4.9)이 아닌 회차별 값(아직 없음)
+
+
+def test_parse_session_blocks_ajax_format():
+    from crawler.detail_scraper import parse_session_blocks
+    t = ("20회차 모집마감 훈련비 19,003,050 원 본인부담금 0 원 훈련기간 2025-12-19 ~ 2026-07-13 "
+         "모집인원 (정원),수강확정인원,수강신청인원,만족도,취업률 고용보험가입 3개월,취업률 고용보험가입 6개월,"
+         "취업률 고용보험미가입 3개월,취업률 고용보험미가입 6개월,훈련과정 상세정보,실시여부을(를) 제공하는 표 "
+         "모집인원 (정원) 100명 수강확정인원 36명 수강신청인원 (선발 및 검토대기인원포함) 36명 "
+         "만족도 만족도 100점 기준91.1 점 (4.6 / 16명) 취업률 고용보험가입 3개월 40% (6/15) "
+         "취업률 고용보험가입 6개월 73.3% (11/15) 훈련과정 상세정보 20회차 보러가기 실시여부 Y "
+         "19회차 모집중 훈련비 19,003,050 원 본인부담금 0 원 훈련기간 2026-11-23 ~ 2027-05-19 "
+         "모집인원 (정원) 30명 수강확정인원 0명 수강신청인원 (선발 및 검토대기인원포함) 0명 "
+         "만족도 만족도 100점 기준0 점 (0 / 명) 훈련과정 상세정보 19회차 보러가기 실시여부 N")
+    b = parse_session_blocks(t)
+    assert b[20]["capacity"] == 100 and b[20]["confirmed"] == 36 and b[20]["applicants"] == 36
+    assert b[20]["satisfaction"] == 4.6 and b[20]["evaluators"] == 16
+    assert b[20]["employment_rate_6m"] == 73.3 and b[20]["employment_rate_3m"] == 40.0
+    assert b[19]["capacity"] == 30 and "satisfaction" not in b[19] and b[19]["held"] is False
