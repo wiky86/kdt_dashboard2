@@ -229,6 +229,72 @@ def notice_snippets(name: str, text: str) -> None:
     print(f"::notice title=상세 페이지 {name}::{msg}")
 
 
+# ---------------------------------------------------------------------------
+# '다른회차 정보보기' 영역: 한 페이지에 그 과정의 모든 회차 실적이 들어 있다
+#   "28회차 모집마감 훈련비 13,762,240 원 ... 훈련기간 2024-10-15 ~ 2025-04-04 ...
+#    모집인원 25명 수강확정인원 15명 수강신청인원 (…): 15명 만족도 100점 기준84.7 점 (14 명)
+#    취업률 고용보험가입 3개월 44.4% (4/9) 취업률 고용보험가입 6개월 66.7% (6/9)
+#    취업률 고용보험미가입 3개월 11.1% (1/9) 취업률 고용보험미가입 6개월 11.1% (1/9) … 실시여부 Y"
+#   아직 집계 전이면 취업률 자리에 '훈련진행중' 같은 글자가 온다.
+# ---------------------------------------------------------------------------
+
+BLOCK_START_RE = re.compile(r"(\d{1,4})\s*회차\s+(?:[가-힣]{2,6}\s+)?훈련비\s+([\d,]+)\s*원")
+
+
+def _emp(block: str, label: str) -> tuple[Optional[float], Optional[int], Optional[int]]:
+    m = re.search(label + r"\s*([\d.]+)\s*%\s*\(\s*(\d+)\s*/\s*(\d+)\s*\)", block)
+    if not m:
+        return None, None, None
+    return _rate(m.group(1)), int(m.group(2)), int(m.group(3))
+
+
+def parse_session_blocks(text: str) -> dict[int, dict]:
+    """상세 페이지 전체 텍스트 → {회차: 값}. 영역이 없으면 빈 dict."""
+    t = re.sub(r"\s+", " ", text or "")
+    starts = list(BLOCK_START_RE.finditer(t))
+    out: dict[int, dict] = {}
+    for i, m in enumerate(starts):
+        end = starts[i + 1].start() if i + 1 < len(starts) else min(len(t), m.end() + 1500)
+        block = t[m.start():end]
+        if "취업률" not in block and "수강확정인원" not in block:
+            continue  # 페이지 위쪽의 현재 회차 요약 등 다른 영역
+        sess = int(m.group(1))
+        v: dict = {"training_fee": _int(m.group(2))}
+        d = re.search(DATE + r"\s*~\s*" + DATE, block)
+        if d:
+            v["start_date"] = _date(*d.group(1, 2, 3))
+            v["end_date"] = _date(*d.group(4, 5, 6))
+        for key, pat in (("capacity", r"모집\s*인원\s*(?:\(\s*정원\s*\))?\s*(\d{1,4})\s*명"),
+                         ("confirmed", r"수강\s*확정\s*인원\s*(\d{1,4})\s*명"),
+                         ("applicants", r"수강\s*신청\s*인원[^0-9]{0,40}?(\d{1,4})\s*명")):
+            mm = re.search(pat, block)
+            if mm:
+                v[key] = int(mm.group(1))
+        # "만족도 100점 기준91.1 점 (4.6 / 16명)" 또는 "만족도 100점 기준84.7 점 (14 명)"
+        mm = re.search(r"100\s*점\s*기준\s*([\d.]+)\s*점\s*\(\s*(?:([\d.]+)\s*/\s*)?(\d*)\s*명\s*\)", block)
+        if mm:
+            score = float(mm.group(1))
+            cnt = int(mm.group(3)) if mm.group(3) else 0
+            if score > 0 and cnt > 0:
+                five = float(mm.group(2)) if mm.group(2) else round(score / 20, 1)   # 5점 척도 (기존 시트와 같음)
+                v["satisfaction"] = five
+                v["evaluators"] = cnt
+        r3, _, _ = _emp(block, r"고용보험\s*가입\s*3\s*개월")
+        r6, hired6, base6 = _emp(block, r"고용보험\s*가입\s*6\s*개월")
+        u6, uhired6, _ = _emp(block, r"고용보험\s*미가입\s*6\s*개월")
+        if r3 is not None:
+            v["employment_rate_3m"] = r3
+        if r6 is not None:
+            v["employment_rate_6m"] = r6
+        if base6 is not None:
+            v["employment_base"] = base6            # 취업률 산정 대상 인원
+        mm = re.search(r"실시\s*여부\s*([YN])\b", block)
+        if mm:
+            v["held"] = mm.group(1) == "Y"
+        out[sess] = v
+    return out
+
+
 class DetailScraper:
     def __init__(self, delay: float = 1.2, max_pages: int = 1500, dump_dir: Optional[str] = None):
         self.delay = delay
@@ -237,6 +303,7 @@ class DetailScraper:
         self.dump_dir = dump_dir
         self._dumped = 0
         self._noticed = 0
+        self._block_notes = 0
         self.consecutive_errors = 0
         self.s = requests.Session()
         self.s.headers.update({
@@ -278,6 +345,8 @@ class DetailScraper:
                     # 없는 회차를 요청하면 다른 회차로 넘어가는 경우
                     return None
                 got.update({k: v for k, v in parse_names(r.text).items() if k not in got})
+                # '다른회차 정보보기' 탭: 페이지가 열린 뒤 별도 요청으로 불러온다 (과정의 모든 회차 실적)
+                got["sessions"] = self.fetch_sessions(tracse_id, session)
                 return got
             except (ValueError, TypeError, AttributeError, IndexError) as e:
                 log.warning("상세 페이지 해석 실패(%s): %s", url, e)
@@ -288,6 +357,39 @@ class DetailScraper:
                 time.sleep(wait)
         self.consecutive_errors += 1
         return None
+
+    OTHER_TME_URL = "https://www.work24.go.kr/hr/a/a/3100/selectOtherTracseTmeTab.do"
+
+    def fetch_sessions(self, tracse_id: str, session: int | str) -> dict[int, dict]:
+        """'다른회차 정보보기' 탭 HTML을 받아 {회차: 실적}으로. 실패하면 빈 dict.
+
+        tracseTme(실제로 있는 회차 아무거나)를 같이 보내야 취업률 칸이 채워져서 온다.
+        """
+        for attempt in range(2):
+            try:
+                r = self.s.post(self.OTHER_TME_URL, data={"tracseId": tracse_id, "tracseTme": str(session), "mobileYn": "N"},
+                                headers={"X-Requested-With": "XMLHttpRequest"}, timeout=30)
+                r.raise_for_status()
+                r.encoding = r.apparent_encoding or "utf-8"
+                time.sleep(self.delay / 2)
+                blocks = parse_session_blocks(BeautifulSoup(r.text, "html.parser").get_text(" "))
+                n_emp = sum(1 for v in blocks.values() if v.get("employment_rate_6m") is not None)
+                if self.dump_dir and self._block_notes < 4 and n_emp:
+                    self._block_notes += 1
+                    import os
+                    if os.environ.get("GITHUB_ACTIONS"):
+                        flat = re.sub(r"\s+", " ", BeautifulSoup(r.text, "html.parser").get_text(" "))
+                        m = re.search(r"고용보험가입 6개월\s*[\d.]+\s*%", flat)
+                        i = m.start() if m else 0
+                        ex = [(k, v.get("employment_rate_3m"), v.get("employment_rate_6m"), v.get("satisfaction"))
+                              for k, v in sorted(blocks.items()) if v.get("employment_rate_6m") is not None][:4]
+                        print(f"::notice title=다른회차 취업률 {tracse_id[-6:]}::파싱 {len(blocks)}회차 중 6개월 취업률 {n_emp} / "
+                              f"예 {ex} / 원문: {flat[max(0, i - 300):i + 200]}"[:1500])
+                return blocks
+            except (requests.RequestException, ValueError) as e:
+                log.warning("다른회차 탭 실패(%s): %s", tracse_id, e)
+                time.sleep(3)
+        return {}
 
     def _dump(self, tracse_id: str, session, html: str, text: str) -> None:
         import os

@@ -38,6 +38,8 @@ TARGET_TYPE = "K-디지털 트레이닝"   # 이 훈련유형만 저장 (기초�
 NOT_TARGET_SESSION = 0             # crawl_skips에 회차 0으로 기록 = 대상 아닌 과정
 
 COURSE_LEVEL = ("ncs_code", "ncs_job", "ncs_level", "training_days", "training_hours")
+BLOCK_FIELDS = ("start_date", "end_date", "training_fee", "capacity", "confirmed", "applicants",
+                "employment_rate_3m", "employment_rate_6m")
 SESSION_FIELDS = ("start_date", "end_date", "training_fee", "capacity", "applicants", "confirmed",
                   "completed", "satisfaction", "evaluators", "completion_rate",
                   "employment_rate_3m", "employment_rate_6m")
@@ -115,6 +117,10 @@ def is_live(row: dict, today: date) -> bool:
         return True
     if date.fromisoformat(ed) >= today - timedelta(days=270):
         return True
+    # 6개월 취업률은 종강 후 반년 넘게 지나야 공개되므로, 2년까지는 비어 있으면 계속 확인
+    if row.get("employment_rate_6m") is None and (row.get("confirmed") or 0) > 0 \
+            and date.fromisoformat(ed) >= today - timedelta(days=730):
+        return True
     return any(row.get(c) is None for c in ("confirmed", "satisfaction"))
 
 
@@ -170,6 +176,8 @@ def parse_args(argv=None):
     p.add_argument("--list-url", help="목록 페이지 주소 (기본: KDT 목록)")
     p.add_argument("--list-since", help="목록 개강일자 시작 YYYY-MM-DD (기본: 1년 전, backfill은 2020-12-01)")
     p.add_argument("--skip-category", action="store_true", help="KDT 구분(AI캠퍼스·단기) 목록 확인 생략")
+    p.add_argument("--refresh-all", action="store_true",
+                   help="모든 과정을 과정당 상세 페이지 1개씩 다시 읽기 (회차별 취업률·만족도 일괄 갱신)")
     p.add_argument("--save-every", type=int, default=200, help="상세 페이지 N개마다 중간 저장")
     p.add_argument("--dry-run", action="store_true", help="DB에 쓰지 않음")
     p.add_argument("--inspect", metavar="DIR", help="목록·상세 페이지 원본 샘플을 DIR에 저장")
@@ -256,7 +264,17 @@ def run(args) -> int:
     log.info("전체 과정 %d (목록 %d, DB %d행)", len(courses), len(active), len(rows))
 
     # 3) 상세 페이지 ---------------------------------------------------------
-    tasks = plan_tasks(courses, rows, skips, active, today, now, args.rescrape_days)
+    if args.refresh_all:
+        # 상세 페이지 한 장에 그 과정의 모든 회차 실적이 들어 있으므로 과정당 한 번만 읽는다
+        started: dict[tuple, int] = {}
+        for (tid, cst, sess), r in rows.items():
+            if r.get("start_date") and r["start_date"] <= today.isoformat():
+                started[(tid, cst)] = max(started.get((tid, cst), 0), sess)
+        tasks = [(1, *ck, started.get(ck) or ref.tracse_tme) for ck, ref in courses.items()
+                 if days_since(skips.get((*ck, NOT_TARGET_SESSION)), now) >= 365]
+        tasks.sort(key=lambda t: t[1], reverse=True)
+    else:
+        tasks = plan_tasks(courses, rows, skips, active, today, now, args.rescrape_days)
     log.info("상세 페이지 대상 %d개 (이번 실행 최대 %d)", len(tasks), args.max_pages)
     scraper = DetailScraper(delay=args.delay, max_pages=args.max_pages,
                             dump_dir=os.path.join(args.inspect, "detail") if args.inspect else None)
@@ -284,6 +302,7 @@ def run(args) -> int:
             renamed_keys.add((tid, cst, sess))
     stats["renamed"] = len(renamed_keys)
     not_target: set[tuple] = set()
+    covered: set[tuple] = set()       # 이번 실행에서 '다른회차' 영역으로 모든 회차를 갱신한 과정
     dirty: set[tuple] = set(renamed_keys)   # 이름만 바뀐 회차도 저장
     new_skips: list[tuple] = []
     queued = {t[1:] for t in tasks}
@@ -294,6 +313,9 @@ def run(args) -> int:
         ck, k = (tid, cst), (tid, cst, sess)
         ref = courses[ck]
         if ck in not_target:
+            continue
+        if ck in covered:
+            stats["covered_skip"] += 1
             continue
         got = scraper.fetch(tid, sess, ref.crse_tracse_se or KDT_CODE, cst)
         if not got:
@@ -325,6 +347,38 @@ def run(args) -> int:
         row["web_scraped_at"] = now_iso
         rows[k] = row
         dirty.add(k)
+
+        # '다른회차 정보보기' 영역: 그 과정의 모든 회차 실적(정원·수강확정·만족도·취업률)을 한 번에 반영
+        blocks = got.get("sessions") or {}
+        if blocks:
+            covered.add(ck)
+            stats["block_sessions"] += len(blocks)
+            for s2, vals in blocks.items():
+                k2 = (tid, cst, s2)
+                r2 = rows.get(k2)
+                if r2 is None:
+                    r2 = {"tracse_id": tid, "trainst_cstmr_id": cst, "session": s2,
+                          "crse_tracse_se": row.get("crse_tracse_se"), "kdt_category": row.get("kdt_category"),
+                          "institution": row.get("institution"), "course_name": row.get("course_name")}
+                    r2.update({c: row.get(c) for c in COURSE_LEVEL})
+                    sessions_of[ck].add(s2)
+                    stats["block_new_sessions"] += 1
+                vals = dict(vals)
+                ed2 = vals.get("end_date") or r2.get("end_date")
+                if ed2:
+                    # 종강 후 3·6개월이 지나기 전 값은 집계 중이라 0%로 보일 수 있어 저장하지 않는다
+                    if date.fromisoformat(ed2) + timedelta(days=92) > today:
+                        vals.pop("employment_rate_3m", None)
+                    if date.fromisoformat(ed2) + timedelta(days=183) > today:
+                        vals.pop("employment_rate_6m", None)
+                r2 = merge(r2, {c: vals.get(c) for c in BLOCK_FIELDS})
+                # 만족도는 회차별 값으로 (페이지 위쪽 '만족도 (4.3)'은 과정 전체 평균이라 쓰지 않음)
+                r2["satisfaction"] = vals.get("satisfaction")
+                r2["evaluators"] = vals.get("evaluators")
+                r2["web_scraped_at"] = now_iso
+                rows[k2] = r2
+                dirty.add(k2)
+            row = rows[k]
 
         # 과정 공통값은 이 회차에 넣고, 같은 과정의 다른 회차는 빈 칸만 채움
         course_vals = {c: got[c] for c in COURSE_LEVEL if got.get(c) is not None}
@@ -415,6 +469,8 @@ def report(rows: list[dict], stats: dict, args, pages: int = 0) -> None:
     if os.environ.get("GITHUB_ACTIONS"):
         # 실행 목록·API에서 바로 보이도록 한 줄 요약을 알림으로도 남긴다
         cov = ", ".join(f"{c} {v / total * 100:.0f}%" for c, v in cover.items())
+        print(f"::notice title=회차별 실적::'다른회차' 영역으로 갱신 {stats['block_sessions']}회차"
+              f"(새 회차 {stats['block_new_sessions']}) / 같은 과정이라 건너뛴 페이지 {stats['covered_skip']}")
         print(f"::notice title=KDT 수집 결과::과정 {stats['listed']}개(AI캠퍼스 {stats['category_AI캠퍼스']}, 단기 {stats['category_단기']}) / 구분·이름 갱신 {stats['renamed']}행 / 상세 성공 {stats['detail_ok']}, KDT아님 {stats['not_target']}, "
               f"회차 없음 {stats['detail_missing']}, 남음 {stats['remaining']} / 저장 {stats['saved']}행(실패 {stats['save_failed']}) / {cov}")
 
